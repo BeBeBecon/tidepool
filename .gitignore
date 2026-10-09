@@ -1,0 +1,42 @@
+# Local notes and planning — not part of the project
+CLAUDE.md
+GitMEMO.md
+ROADMAP.md
+.claude/
+docs/internal/
+*.local.md
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Training output, checkpoints, rendered media
+logs/
+out/
+checkpoints/
+*.onnx
+*.rknn
+*.pt
+*.pth
+*.mp4
+*.mov
+*.gif
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
