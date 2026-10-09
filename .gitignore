@@ -40,3 +40,6 @@ checkpoints/
 .idea/
 *.swp
 .DS_Store
+
+# Screen recordings and renders for posts
+media/
