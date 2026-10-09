@@ -1,0 +1,6 @@
+name: spiral-dominoes
+description: Forty dominoes in a spiral. Walk into the first one and watch.
+look: studio
+spawn: {at: [-0.6, 0], yaw: 0}
+toys:
+  - domino_run: {path: spiral, count: 50, start: [0.35, 0], inner: 0.3, growth: 0.15, height: 0.1}

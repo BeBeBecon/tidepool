@@ -1,0 +1,6 @@
+name: domino-line
+description: A straight run of dominoes. The simplest thing that topples.
+look: studio
+spawn: {at: [-0.6, 0], yaw: 0}
+toys:
+  - domino_run: {path: line, count: 25, start: [0.35, 0], height: 0.1}
