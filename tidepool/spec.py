@@ -20,6 +20,8 @@ from typing import Any
 
 import yaml
 
+from .room import Photo
+
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.-]*\Z")
 
 
@@ -38,9 +40,10 @@ class Spec:
     name: str
     description: str = ""
     look: str = "studio"
-    spawn_at: tuple[float, float] = (0.0, 0.0)
+    spawn_at: tuple[float, float] | None = (0.0, 0.0)   # None: let the photo pick a flat spot
     spawn_yaw: float = 0.0
     toys: list[ToyCall] = field(default_factory=list)
+    photo: Photo | None = None
     source: Path | None = None
 
 
@@ -52,22 +55,30 @@ def load(path: str | Path) -> Spec:
         raise SpecError(f"{path}: {e}") from e
     if not isinstance(raw, dict):
         raise SpecError(f"{path}: top level must be a mapping")
-    spec = parse(raw, default_name=path.stem)
+    spec = parse(raw, default_name=path.stem, base=path.parent)
     spec.source = path
     return spec
 
 
-def parse(raw: dict[str, Any], default_name: str = "scene") -> Spec:
+def parse(raw: dict[str, Any], default_name: str = "scene", base: Path | None = None) -> Spec:
     name = str(raw.get("name") or default_name)
     if not NAME.match(name):
         raise SpecError(f"name {name!r}: use letters, digits, '_', '.', '-' and start with a letter")
 
-    spawn = raw.get("spawn") or {}
+    photo = _photo(raw.get("photo"), base or Path.cwd())
+
+    spawn = raw.get("spawn")
+    if spawn is None:
+        spawn = {} if photo is None else {"at": "auto"}
     if not isinstance(spawn, dict):
         raise SpecError("spawn must be a mapping like {at: [x, y], yaw: 0}")
     at = spawn.get("at", [0.0, 0.0])
-    if not (isinstance(at, (list, tuple)) and len(at) == 2):
-        raise SpecError("spawn.at must be [x, y]")
+    if at == "auto":
+        if photo is None:
+            raise SpecError("spawn.at: 'auto' needs a photo")
+        at = None
+    elif not (isinstance(at, (list, tuple)) and len(at) == 2):
+        raise SpecError("spawn.at must be [x, y] (or 'auto' with a photo)")
 
     toys_raw = raw.get("toys") or []
     if not isinstance(toys_raw, list):
@@ -86,7 +97,7 @@ def parse(raw: dict[str, Any], default_name: str = "scene") -> Spec:
             raise SpecError(f"toys[{i}] ({kind}): parameters must be a mapping")
         toys.append(ToyCall(str(kind), dict(params)))
 
-    known = {"name", "description", "look", "spawn", "toys"}
+    known = {"name", "description", "look", "spawn", "toys", "photo"}
     extra = set(raw) - known
     if extra:
         raise SpecError(f"unknown top-level keys: {', '.join(sorted(extra))}")
@@ -95,7 +106,35 @@ def parse(raw: dict[str, Any], default_name: str = "scene") -> Spec:
         name=name,
         description=str(raw.get("description") or ""),
         look=str(raw.get("look") or "studio"),
-        spawn_at=(float(at[0]), float(at[1])),
+        spawn_at=None if at is None else (float(at[0]), float(at[1])),
         spawn_yaw=float(spawn.get("yaw", 0.0)),
         toys=toys,
+        photo=photo,
     )
+
+
+def _photo(raw: Any, base: Path) -> Photo | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        raw = {"file": raw}
+    if not isinstance(raw, dict) or "file" not in raw:
+        raise SpecError("photo must be a path or a mapping with 'file'")
+    known = {"file", "width", "relief", "cells", "quant", "clear"}
+    extra = set(raw) - known
+    if extra:
+        raise SpecError(f"photo: unknown keys {', '.join(sorted(extra))}; takes {', '.join(sorted(known))}")
+    file = (base / str(raw["file"])).resolve()
+    if not file.exists():
+        raise SpecError(f"photo: {file} not found")
+    try:
+        return Photo(
+            file=file,
+            width=float(raw.get("width", Photo.width)),
+            relief=float(raw.get("relief", Photo.relief)),
+            cells=int(raw.get("cells", Photo.cells)),
+            quant=float(raw.get("quant", Photo.quant)),
+            clear=float(raw.get("clear", Photo.clear)),
+        )
+    except (TypeError, ValueError) as e:
+        raise SpecError(f"photo: {e}") from None

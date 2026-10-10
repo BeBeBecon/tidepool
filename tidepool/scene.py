@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from . import toys
+from . import room, toys
 from .spec import Spec, SpecError
 
 LOOKS: dict[str, dict[str, Any]] = {
@@ -31,7 +32,8 @@ LOOKS: dict[str, dict[str, Any]] = {
 }
 
 
-def build(spec: Spec) -> dict[str, Any]:
+def build(spec: Spec, cache_dir: Path | None = None) -> dict[str, Any]:
+    """The mjscene document. With a photo, `cache_dir` is where its depth map is kept."""
     if spec.look not in LOOKS:
         raise SpecError(f"look {spec.look!r}: choose from {', '.join(LOOKS)}")
     objects: list[dict[str, Any]] = []
@@ -41,6 +43,15 @@ def build(spec: Spec) -> dict[str, Any]:
         except (KeyError, TypeError, ValueError) as e:
             raise SpecError(f"toys[{i}]: {e}") from None
 
+    terrain = None
+    spawn_at = spec.spawn_at
+    if spec.photo is not None:
+        terrain = room.terrain(spec.photo, cache_dir or spec.photo.file.parent / ".tidepool")
+        if spawn_at is None:
+            spawn_at = terrain.spawn
+    if spawn_at is None:
+        spawn_at = (0.0, 0.0)
+
     doc: dict[str, Any] = {
         "name": spec.name,
         "title": spec.name.replace("-", " ").replace("_", " ").title(),
@@ -49,12 +60,14 @@ def build(spec: Spec) -> dict[str, Any]:
         **LOOKS[spec.look],
         "defaults": {"friction": "wood", "contact": "default"},
         "spawn": {
-            "position": [spec.spawn_at[0], spec.spawn_at[1], 0.0],
+            "position": [spawn_at[0], spawn_at[1], 0.0],
             "yaw": spec.spawn_yaw,
-            "clearance": 0.4,
+            "clearance": 0.3 if terrain else 0.4,
         },
         "objects": objects,
     }
+    if terrain is not None:
+        room.apply(doc, spec.photo, terrain)
     return doc
 
 

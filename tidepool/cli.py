@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -31,6 +33,37 @@ def cmd_new(args) -> int:
     shutil.copy(src, dest)
     print(f"wrote {dest}")
     return 0
+
+
+def cmd_room(args) -> int:
+    photo = Path(args.photo)
+    if not photo.exists():
+        print(f"no such photo: {photo}", file=sys.stderr)
+        return 1
+    name = args.name or re.sub(r"[^A-Za-z0-9_.-]+", "-", photo.stem).strip("-").lower() or "room"
+    dest = Path(args.out or photo.with_name(f"{name}.yaml"))
+    if dest.exists() and not args.force:
+        print(f"{dest} exists; pass --force to overwrite", file=sys.stderr)
+        return 1
+    rel = os.path.relpath(photo.resolve(), dest.resolve().parent)
+    opts = {k: getattr(args, k) for k in ("width", "relief", "cells") if getattr(args, k) is not None}
+    photo_block = f"photo: {rel}" if not opts else "photo:\n  file: " + rel + "".join(
+        f"\n  {k}: {v}" for k, v in opts.items())
+    dest.write_text(
+        f"name: {name}\n"
+        f"description: A photo turned into ground the crab can walk on.\n"
+        f"look: wood\n"
+        f"{photo_block}\n"
+        f"toys: []\n",
+        encoding="utf-8",
+    )
+    print(f"wrote {dest}")
+    if args.no_build:
+        return 0
+    args.spec = str(dest)
+    args.no_verify = False
+    args.json_only = False
+    return cmd_build(args)
 
 
 def _load(path: str) -> spec_mod.Spec:
@@ -86,6 +119,17 @@ def main(argv: list[str] | None = None) -> int:
     n.add_argument("-o", "--out")
     n.add_argument("--force", action="store_true")
     n.set_defaults(fn=cmd_new)
+
+    r = sub.add_parser("room", help="turn a photo into terrain: writes a YAML and builds it")
+    r.add_argument("photo")
+    r.add_argument("-o", "--out", help="where to write the YAML (default: next to the photo)")
+    r.add_argument("--name")
+    r.add_argument("--width", type=float, help="metres across the photo (default 3.0)")
+    r.add_argument("--relief", type=float, help="tallest column in metres (default 0.06)")
+    r.add_argument("--cells", type=int, help="columns across (default 20)")
+    r.add_argument("--force", action="store_true")
+    r.add_argument("--no-build", action="store_true")
+    r.set_defaults(fn=cmd_room)
 
     b = sub.add_parser("build", help="compile a YAML into a verified .map")
     b.add_argument("spec")
