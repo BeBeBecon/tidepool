@@ -57,6 +57,25 @@ def test_spawn_sits_on_the_flat_patch_and_is_cleared():
     assert all(np.hypot(o["pos"][0] - sx, o["pos"][1] - sy) >= 0.3 for o in t.objects)
 
 
+def test_smooth_terrain_has_one_surface_and_prisms_under_the_bump():
+    hm = np.zeros((60, 80), dtype=np.float32)
+    hm[20:30, 30:45] = 0.1
+    p = room.Photo(file=None, width=3.2, cells=16)
+    t = room.smooth(hm, p)
+    assert t.objects[0]["mesh"] == "surface" and t.objects[0]["collision"] is False
+    prisms = t.objects[1:]
+    assert 4 <= len(prisms) <= 40                       # around the bump, not the whole photo
+    assert set(t.files) == {m["file"] for m in t.meshes}
+    surf = t.files["assets/surface.obj"].splitlines()
+    nv = sum(l.startswith("v ") for l in surf)
+    assert nv == sum(l.startswith("vt ") for l in surf) > 100
+    assert all(o["rgba"][3] == 0 for o in prisms)      # collision only, invisible
+    pr = t.files[t.meshes[1]["file"]].splitlines()
+    assert len([l for l in pr if l.startswith("v ")]) == 8
+    sx, sy = t.spawn
+    assert -1.6 < sx < 1.6 and -1.2 < sy < 1.2
+
+
 def test_spec_photo_block(tmp_path):
     from PIL import Image
     img = tmp_path / "desk.png"

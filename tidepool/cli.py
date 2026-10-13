@@ -46,7 +46,8 @@ def cmd_room(args) -> int:
         print(f"{dest} exists; pass --force to overwrite", file=sys.stderr)
         return 1
     rel = os.path.relpath(photo.resolve(), dest.resolve().parent)
-    opts = {k: getattr(args, k) for k in ("width", "relief", "cells") if getattr(args, k) is not None}
+    opts = {k: getattr(args, k) for k in ("width", "relief", "cells", "style")
+            if getattr(args, k) is not None}
     photo_block = f"photo: {rel}" if not opts else "photo:\n  file: " + rel + "".join(
         f"\n  {k}: {v}" for k, v in opts.items())
     dest.write_text(
@@ -125,8 +126,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("-o", "--out", help="where to write the YAML (default: next to the photo)")
     r.add_argument("--name")
     r.add_argument("--width", type=float, help="metres across the photo (default 3.0)")
-    r.add_argument("--relief", type=float, help="tallest column in metres (default 0.06)")
-    r.add_argument("--cells", type=int, help="columns across (default 20)")
+    r.add_argument("--relief", type=float, help="tallest point in metres (default 0.12)")
+    r.add_argument("--cells", type=int, help="collision cells across (default 20)")
+    r.add_argument("--style", choices=["smooth", "blocks"], help="smooth surface (default) or box columns")
     r.add_argument("--force", action="store_true")
     r.add_argument("--no-build", action="store_true")
     r.set_defaults(fn=cmd_room)

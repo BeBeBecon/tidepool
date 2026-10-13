@@ -32,8 +32,12 @@ LOOKS: dict[str, dict[str, Any]] = {
 }
 
 
-def build(spec: Spec, cache_dir: Path | None = None) -> dict[str, Any]:
-    """The mjscene document. With a photo, `cache_dir` is where its depth map is kept."""
+def build(spec: Spec, cache_dir: Path | None = None, with_terrain: bool = False):
+    """The mjscene document. With a photo, `cache_dir` is where its depth map is kept.
+
+    `with_terrain` also returns the `room.Terrain` (or None) so the caller can write
+    its mesh files next to the JSON.
+    """
     if spec.look not in LOOKS:
         raise SpecError(f"look {spec.look!r}: choose from {', '.join(LOOKS)}")
     objects: list[dict[str, Any]] = []
@@ -68,7 +72,7 @@ def build(spec: Spec, cache_dir: Path | None = None) -> dict[str, Any]:
     }
     if terrain is not None:
         room.apply(doc, spec.photo, terrain)
-    return doc
+    return (doc, terrain) if with_terrain else doc
 
 
 def stats(doc: dict[str, Any]) -> dict[str, int]:

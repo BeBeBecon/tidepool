@@ -43,9 +43,9 @@ def _shellflow(*args: str) -> dict:
 def build(spec: Spec, out: Path | None = None, *, verify: bool = True, preview: Path | None = None) -> Built:
     out = out or paths.out_dir() / spec.name
     out.mkdir(parents=True, exist_ok=True)
-    doc = scene.build(spec, cache_dir=out)
-    if spec.photo is not None:
-        room.write_texture(spec.photo, out)
+    doc, terrain = scene.build(spec, cache_dir=out, with_terrain=True)
+    if terrain is not None:
+        room.write_assets(spec.photo, terrain, out)
     spec_json = out / f"{spec.name}.scene.json"
     spec_json.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
 
