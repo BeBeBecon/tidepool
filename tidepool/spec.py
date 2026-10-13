@@ -120,7 +120,7 @@ def _photo(raw: Any, base: Path) -> Photo | None:
         raw = {"file": raw}
     if not isinstance(raw, dict) or "file" not in raw:
         raise SpecError("photo must be a path or a mapping with 'file'")
-    known = {"file", "width", "relief", "cells", "quant", "clear"}
+    known = {"file", "width", "relief", "cells", "quant", "clear", "flatten"}
     extra = set(raw) - known
     if extra:
         raise SpecError(f"photo: unknown keys {', '.join(sorted(extra))}; takes {', '.join(sorted(known))}")
@@ -135,6 +135,7 @@ def _photo(raw: Any, base: Path) -> Photo | None:
             cells=int(raw.get("cells", Photo.cells)),
             quant=float(raw.get("quant", Photo.quant)),
             clear=float(raw.get("clear", Photo.clear)),
+            flatten=bool(raw.get("flatten", Photo.flatten)),
         )
     except (TypeError, ValueError) as e:
         raise SpecError(f"photo: {e}") from None

@@ -28,6 +28,7 @@ class Photo:
     cells: int = 20         # columns across
     quant: float = 0.01     # height step; gives the voxel look and merges near-equal cells
     clear: float = 0.36     # flat circle around the spawn
+    flatten: bool = True    # subtract the perspective slope so only objects stand up
 
 
 @dataclass
@@ -37,11 +38,39 @@ class Terrain:
     size: tuple[float, float]   # half-extents of the floor
 
 
-def grid(depth: np.ndarray, rgb: np.ndarray, cells: int) -> tuple[np.ndarray, np.ndarray]:
-    """Per-cell median depth (0..1) and mean colour. rgb is HxWx3 in 0..1."""
+def detrend(depth: np.ndarray) -> np.ndarray:
+    """What sticks up from the dominant surface, 0..1.
+
+    A photo taken at an angle is mostly perspective: near is close, far is far, and
+    the pillow on the bed is a ripple on that slope. Fit a plane to the surface
+    (twice, the second time ignoring whatever stood out the first time) and keep
+    only what is closer to the camera than the plane.
+    """
+    h, w = depth.shape
+    step = max(1, min(h, w) // 64)
+    ys, xs = np.mgrid[0:h:step, 0:w:step]
+    z = depth[::step, ::step].ravel().astype(np.float64)
+    A = np.c_[xs.ravel() / w, ys.ravel() / h, np.ones(z.size)]
+    keep = np.ones(z.size, bool)
+    for _ in range(2):
+        coef, *_ = np.linalg.lstsq(A[keep], z[keep], rcond=None)
+        res = z - A @ coef
+        keep = res < np.percentile(res, 60)
+    yy, xx = np.mgrid[0:h, 0:w]
+    plane = coef[0] * xx / w + coef[1] * yy / h + coef[2]
+    r = np.maximum(depth - plane, 0)
+    top = np.percentile(r, 99.5)
+    return np.clip(r / (top + 1e-9), 0, 1)
+
+
+def grid(depth: np.ndarray, rgb: np.ndarray, cells: int, flatten: bool = True) -> tuple[np.ndarray, np.ndarray]:
+    """Per-cell height (0..1) and mean colour. rgb is HxWx3 in 0..1."""
     h, w = depth.shape
     rows = max(2, round(cells * h / w))
-    d = (depth - depth.min()) / (depth.max() - depth.min() + 1e-9)
+    if flatten:
+        d = detrend(depth)
+    else:
+        d = (depth - depth.min()) / (depth.max() - depth.min() + 1e-9)
     H = np.zeros((rows, cells))
     C = np.zeros((rows, cells, 3))
     ys = np.linspace(0, h, rows + 1).astype(int)
@@ -49,7 +78,7 @@ def grid(depth: np.ndarray, rgb: np.ndarray, cells: int) -> tuple[np.ndarray, np
     for r in range(rows):
         for c in range(cells):
             block = d[ys[r]:ys[r + 1], xs[c]:xs[c + 1]]
-            H[r, c] = np.median(block)
+            H[r, c] = np.percentile(block, 75)   # small things survive the cell
             C[r, c] = rgb[ys[r]:ys[r + 1], xs[c]:xs[c + 1]].reshape(-1, 3).mean(0)
     return H, C
 
@@ -99,7 +128,7 @@ def terrain(photo: Photo, cache_dir: Path) -> Terrain:
     img = Image.open(photo.file).convert("RGB")
     d = depth_mod.cached(photo.file, cache_dir)
     rgb = np.asarray(img, dtype=np.float32) / 255
-    H, C = grid(d, rgb, photo.cells)
+    H, C = grid(d, rgb, photo.cells, flatten=photo.flatten)
     return columns(H, C, photo)
 
 

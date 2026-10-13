@@ -12,6 +12,18 @@ def bumpy(h=60, w=80):
     return d, rgb
 
 
+def test_detrend_removes_the_slope_and_keeps_the_bump():
+    y, x = np.mgrid[0:60, 0:80]
+    slope = 2.0 + 0.01 * x + 0.02 * y
+    bump = np.zeros_like(slope)
+    bump[20:30, 30:45] = 0.3
+    r = room.detrend(slope + bump)
+    assert r[20:30, 30:45].min() > 0.8
+    outside = np.ones_like(r, bool)
+    outside[18:32, 28:47] = False
+    assert r[outside].mean() < 0.05
+
+
 def test_grid_shape_and_range():
     d, rgb = bumpy()
     H, C = room.grid(d, rgb, cells=16)
