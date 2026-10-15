@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -49,10 +50,13 @@ def build(spec: Spec, cache_dir: Path | None = None, with_terrain: bool = False)
 
     terrain = None
     spawn_at = spec.spawn_at
+    yaw = spec.spawn_yaw
     if spec.photo is not None:
         terrain = room.terrain(spec.photo, cache_dir or spec.photo.file.parent / ".tidepool")
         if spawn_at is None:
             spawn_at = terrain.spawn
+            if terrain.face is not None:   # an auto spawn looks at the first movable
+                yaw = math.degrees(math.atan2(terrain.face[1] - spawn_at[1], terrain.face[0] - spawn_at[0]))
     if spawn_at is None:
         spawn_at = (0.0, 0.0)
 
@@ -65,7 +69,7 @@ def build(spec: Spec, cache_dir: Path | None = None, with_terrain: bool = False)
         "defaults": {"friction": "wood", "contact": "default"},
         "spawn": {
             "position": [spawn_at[0], spawn_at[1], 0.0],
-            "yaw": spec.spawn_yaw,
+            "yaw": round(yaw, 2),
             "clearance": 0.3 if terrain else 0.4,
         },
         "objects": objects,

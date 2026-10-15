@@ -31,6 +31,15 @@ LIFT = 0.002        # keeps the surface mesh off the ground plane
 
 
 @dataclass
+class Movable:
+    """Something in the photo the crab can push: a mask, extruded into a convex body."""
+    mask: Path
+    name: str = "thing"
+    height: float | None = None   # metres; None takes it from the depth map
+    mass: float = 0.3
+
+
+@dataclass
 class Photo:
     file: Path
     width: float = 3.0      # metres across the photo
@@ -41,6 +50,7 @@ class Photo:
     quant: float = 0.01     # blocks only: height step
     clear: float = 0.36     # flat circle around the spawn
     flatten: bool = True    # subtract the perspective slope so only objects stand up
+    movable: list[Movable] = field(default_factory=list)
 
 
 @dataclass
@@ -50,6 +60,7 @@ class Terrain:
     size: tuple[float, float]               # half-extents of the floor
     meshes: list[dict[str, str]] = field(default_factory=list)
     files: dict[str, str] = field(default_factory=dict)   # relative path -> OBJ text
+    face: tuple[float, float] | None = None               # what an auto spawn should look at
 
 
 def detrend(depth: np.ndarray) -> np.ndarray:
@@ -207,11 +218,15 @@ def prism_obj(xy: list[tuple[float, float]], top: list[float]) -> str:
     return "\n".join(v + faces) + "\n"
 
 
-def smooth(hm: np.ndarray, photo: Photo) -> Terrain:
+def smooth(hm: np.ndarray, photo: Photo, avoid: np.ndarray | None = None) -> Terrain:
+    """`avoid` is a pixel mask of places the spawn must not pick (under a movable)."""
     Hc = corners(hm, photo.cells)
     rows, cols = Hc.shape[0] - 1, Hc.shape[1] - 1
     f = _Frame(rows, cols, photo.width)
     cell_h = (Hc[:-1, :-1] + Hc[:-1, 1:] + Hc[1:, 1:] + Hc[1:, :-1]) / 4
+    if avoid is not None:
+        taken = Image.fromarray(avoid.astype(np.uint8) * 255).resize((cols, rows), Image.BOX)
+        cell_h = cell_h + (np.asarray(taken) > 0) * 10.0
     sr, sc = flattest(cell_h)
     spawn = (round(f.x(sc + 0.5), 3), round(f.y(sr + 0.5), 3))
 
@@ -239,16 +254,127 @@ def smooth(hm: np.ndarray, photo: Photo) -> Terrain:
     return Terrain(objs, spawn, f.size, meshes, files)
 
 
+def read_mask(path: Path, shape: tuple[int, int]) -> np.ndarray:
+    """A hand-painted mask as a bool array the size of the depth map.
+
+    Paint on a transparent layer, or white on black: the alpha channel counts
+    when there is one, brightness otherwise.
+    """
+    img = Image.open(path)
+    img = img.convert("LA") if img.mode in ("RGBA", "LA", "P") else img.convert("L")
+    img = img.resize((shape[1], shape[0]), Image.BILINEAR)
+    a = np.asarray(img)
+    if a.ndim == 3:
+        return a[..., 1] > 127
+    return a > 127
+
+
+def dilate(mask: np.ndarray, px: int) -> np.ndarray:
+    img = Image.fromarray(mask.astype(np.uint8) * 255).filter(ImageFilter.MaxFilter(2 * px + 1))
+    return np.asarray(img) > 0
+
+
+def hull(pts: np.ndarray, limit: int = 32) -> np.ndarray:
+    """Convex hull of 2-D points (monotone chain), thinned to at most `limit` corners."""
+    pts = np.unique(pts, axis=0)
+    if len(pts) < 3:
+        return pts
+    pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
+    cross = lambda o, a, b: (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    lower: list = []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    upper: list = []
+    for p in pts[::-1]:
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    h = np.array(lower[:-1] + upper[:-1])
+    if len(h) > limit:
+        h = h[np.linspace(0, len(h), limit, endpoint=False).astype(int)]
+    return h
+
+
+def extrude(mask: np.ndarray, hm: np.ndarray, m: Movable, f: _Frame) -> tuple[str, list[float], float]:
+    """The masked region as a prism standing on the floor, textured with the photo.
+
+    Returns the OBJ text, the body position and the height. Vertices are centred
+    on the footprint so MuJoCo's free joint sits in the middle of the object.
+    """
+    h, w = mask.shape
+    ys, xs = np.nonzero(mask)
+    if len(xs) < 3:
+        raise ValueError(f"movable {m.name!r}: the mask is empty")
+    px = f.width / w
+    world = np.c_[-f.width / 2 + (xs + 0.5) * px, f.depth / 2 - (ys + 0.5) * px]
+    ring = hull(world)
+    if m.height is not None:
+        height = m.height
+    else:
+        # Monocular depth flattens small things, so a plush reads as a few cm.
+        # Nothing on a bed is flatter than 0.4 x its narrow side.
+        narrow = float(min(np.ptp(ring[:, 0]), np.ptp(ring[:, 1])))
+        height = max(float(np.percentile(hm[mask], 90)), 0.4 * narrow, 0.03)
+    cx, cy = ring.mean(0)
+    v, vt = [], []
+    for z in (0.0, height):
+        for x, y in ring:
+            v.append(f"v {x - cx:.4f} {y - cy:.4f} {z:.4f}")
+            vt.append(f"vt {(x + f.width / 2) / f.width:.4f} {(y + f.depth / 2) / f.depth:.4f}")
+    n = len(ring)
+    bot = lambda k: k + 1
+    top = lambda k: n + k + 1
+    faces = []
+    for k in range(1, n - 1):
+        faces.append(f"f {top(0)}/{top(0)} {top(k)}/{top(k)} {top(k + 1)}/{top(k + 1)}")
+        faces.append(f"f {bot(0)}/{bot(0)} {bot(k + 1)}/{bot(k + 1)} {bot(k)}/{bot(k)}")
+    for k in range(n):
+        a, b, c, d = bot(k), bot((k + 1) % n), top((k + 1) % n), top(k)
+        faces.append(f"f {a}/{a} {b}/{b} {c}/{c}")
+        faces.append(f"f {a}/{a} {c}/{c} {d}/{d}")
+    text = "\n".join(v + vt + faces) + "\n"
+    return text, [round(float(cx), 4), round(float(cy), 4), LIFT], height
+
+
 def terrain(photo: Photo, cache_dir: Path) -> Terrain:
     img = Image.open(photo.file).convert("RGB")
     d = depth_mod.cached(photo.file, cache_dir)
     if photo.style == "blocks":
+        if photo.movable:
+            raise ValueError("photo.movable needs style: smooth")
         rgb = np.asarray(img, dtype=np.float32) / 255
         H, C = grid(d, rgb, photo.cells, flatten=photo.flatten)
         return columns(H, C, photo)
     if photo.style != "smooth":
         raise ValueError(f"photo.style must be smooth or blocks, not {photo.style!r}")
-    return smooth(heights(d, photo), photo)
+    hm = heights(d, photo)
+    if not photo.movable:
+        return smooth(hm, photo)
+
+    # Flatten the ground under each movable (wider than the mask, or the blurred
+    # collision prisms poke out under it), then stand the object there.
+    h, w = hm.shape
+    masks = [read_mask(m.mask, hm.shape) for m in photo.movable]
+    avoid = np.zeros(hm.shape, bool)
+    for mask in masks:
+        avoid |= dilate(mask, int(w / photo.cells))
+    t = smooth(np.where(avoid, 0.0, hm), photo, avoid)
+    rows = max(2, round(photo.cells * h / w))
+    f = _Frame(rows, photo.cells, photo.width)
+    for m, mask in zip(photo.movable, masks):
+        text, pos, _ = extrude(mask, hm, m, f)
+        name = m.name
+        t.files[f"assets/{name}.obj"] = text
+        t.meshes.append({"name": name, "file": f"assets/{name}.obj"})
+        t.objects.append({
+            "name": name, "shape": "mesh", "mesh": name, "kind": "dynamic",
+            "mass": m.mass, "material": "photo", "friction": "wood", "pos": pos,
+        })
+        if t.face is None:
+            t.face = (pos[0], pos[1])
+    return t
 
 
 def write_assets(photo: Photo, t: Terrain, out: Path) -> None:

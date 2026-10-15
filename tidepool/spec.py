@@ -20,7 +20,7 @@ from typing import Any
 
 import yaml
 
-from .room import Photo
+from .room import Movable, Photo
 
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.-]*\Z")
 
@@ -120,7 +120,7 @@ def _photo(raw: Any, base: Path) -> Photo | None:
         raw = {"file": raw}
     if not isinstance(raw, dict) or "file" not in raw:
         raise SpecError("photo must be a path or a mapping with 'file'")
-    known = {"file", "width", "relief", "cells", "style", "gamma", "quant", "clear", "flatten"}
+    known = {"file", "width", "relief", "cells", "style", "gamma", "quant", "clear", "flatten", "movable"}
     extra = set(raw) - known
     if extra:
         raise SpecError(f"photo: unknown keys {', '.join(sorted(extra))}; takes {', '.join(sorted(known))}")
@@ -129,6 +129,7 @@ def _photo(raw: Any, base: Path) -> Photo | None:
         raise SpecError(f"photo: {file} not found")
     try:
         return Photo(
+            movable=_movable(raw.get("movable"), base),
             file=file,
             width=float(raw.get("width", Photo.width)),
             relief=float(raw.get("relief", Photo.relief)),
@@ -141,3 +142,33 @@ def _photo(raw: Any, base: Path) -> Photo | None:
         )
     except (TypeError, ValueError) as e:
         raise SpecError(f"photo: {e}") from None
+
+
+def _movable(raw: Any, base: Path) -> list[Movable]:
+    """`movable: shiba.png`, or a list of masks / mappings with mask, name, height, mass."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raw = [raw]
+    out = []
+    for i, entry in enumerate(raw):
+        if isinstance(entry, str):
+            entry = {"mask": entry}
+        if not (isinstance(entry, dict) and "mask" in entry):
+            raise SpecError(f"photo.movable[{i}]: give a mask image, or a mapping with 'mask'")
+        extra = set(entry) - {"mask", "name", "height", "mass"}
+        if extra:
+            raise SpecError(f"photo.movable[{i}]: unknown keys {', '.join(sorted(extra))}")
+        mask = (base / str(entry["mask"])).resolve()
+        if not mask.exists():
+            raise SpecError(f"photo.movable[{i}]: {mask} not found")
+        name = str(entry.get("name") or re.sub(r"[^A-Za-z0-9_]+", "_", mask.stem).strip("_") or f"thing{i}")
+        if not NAME.match(name):
+            raise SpecError(f"photo.movable[{i}]: name {name!r} must start with a letter")
+        out.append(Movable(mask=mask, name=name,
+                           height=None if entry.get("height") is None else float(entry["height"]),
+                           mass=float(entry.get("mass", Movable.mass))))
+    names = [m.name for m in out]
+    if len(set(names)) != len(names):
+        raise SpecError("photo.movable: names must be unique")
+    return out

@@ -45,11 +45,21 @@ def cmd_room(args) -> int:
     if dest.exists() and not args.force:
         print(f"{dest} exists; pass --force to overwrite", file=sys.stderr)
         return 1
-    rel = os.path.relpath(photo.resolve(), dest.resolve().parent)
+    here = dest.resolve().parent
+    rel = os.path.relpath(photo.resolve(), here)
     opts = {k: getattr(args, k) for k in ("width", "relief", "cells", "style")
             if getattr(args, k) is not None}
-    photo_block = f"photo: {rel}" if not opts else "photo:\n  file: " + rel + "".join(
-        f"\n  {k}: {v}" for k, v in opts.items())
+    for m in args.movable or []:
+        if not Path(m).exists():
+            print(f"no such mask: {m}", file=sys.stderr)
+            return 1
+    masks = [os.path.relpath(Path(m).resolve(), here) for m in args.movable or []]
+    if not opts and not masks:
+        photo_block = f"photo: {rel}"
+    else:
+        photo_block = "photo:\n  file: " + rel + "".join(f"\n  {k}: {v}" for k, v in opts.items())
+        if masks:
+            photo_block += "\n  movable:" + "".join(f"\n    - mask: {m}" for m in masks)
     dest.write_text(
         f"name: {name}\n"
         f"description: A photo turned into ground the crab can walk on.\n"
@@ -129,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--relief", type=float, help="tallest point in metres (default 0.12)")
     r.add_argument("--cells", type=int, help="collision cells across (default 20)")
     r.add_argument("--style", choices=["smooth", "blocks"], help="smooth surface (default) or box columns")
+    r.add_argument("--movable", action="append", metavar="MASK.png",
+                   help="a painted mask of something in the photo the crab can push (repeatable)")
     r.add_argument("--force", action="store_true")
     r.add_argument("--no-build", action="store_true")
     r.set_defaults(fn=cmd_room)
