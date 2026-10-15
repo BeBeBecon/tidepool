@@ -47,7 +47,7 @@ def cmd_room(args) -> int:
         return 1
     here = dest.resolve().parent
     rel = os.path.relpath(photo.resolve(), here)
-    opts = {k: getattr(args, k) for k in ("width", "relief", "cells", "style")
+    opts = {k: getattr(args, k) for k in ("width", "relief", "cells", "style", "inpaint")
             if getattr(args, k) is not None}
     for m in args.movable or []:
         if not Path(m).exists():
@@ -119,6 +119,24 @@ def cmd_play(args) -> int:
         raise SystemExit(f"error: {e}") from None
 
 
+def cmd_shoot(args) -> int:
+    from . import shoot as shoot_mod
+
+    s = _load(args.spec)
+    target = paths.out_dir() / s.name / f"{s.name}.map"
+    if args.rebuild or not target.exists():
+        try:
+            target = build_mod.build(s, verify=False).map
+        except (spec_mod.SpecError, build_mod.BuildError, paths.MissingRepo) as e:
+            raise SystemExit(f"error: {e}") from None
+    out = Path(args.out or paths.out_dir() / s.name / f"{s.name}.mp4")
+    watch = [m.name for m in s.photo.movable] if s.photo else []
+    try:
+        return shoot_mod.film(target, s.shoot, out, watch=watch)
+    except paths.MissingRepo as e:
+        raise SystemExit(f"error: {e}") from None
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="tidepool", description="A toy box for the Jumper crab robot.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -141,6 +159,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--style", choices=["smooth", "blocks"], help="smooth surface (default) or box columns")
     r.add_argument("--movable", action="append", metavar="MASK.png",
                    help="a painted mask of something in the photo the crab can push (repeatable)")
+    r.add_argument("--inpaint", choices=["lama", "fast", "none"],
+                   help="how to fill the photo where a movable was: lama (default), fast, none")
     r.add_argument("--force", action="store_true")
     r.add_argument("--no-build", action="store_true")
     r.set_defaults(fn=cmd_room)
@@ -160,6 +180,12 @@ def main(argv: list[str] | None = None) -> int:
     pl.add_argument("--ui", action="store_true", help="keep the viewer's side panels")
     pl.add_argument("--timeout", type=float)
     pl.set_defaults(fn=cmd_play)
+
+    sh = sub.add_parser("shoot", help="film the scene headless, driven by the YAML's shoot script")
+    sh.add_argument("spec")
+    sh.add_argument("-o", "--out", help="mp4 to write (default: out/<name>/<name>.mp4)")
+    sh.add_argument("--rebuild", action="store_true")
+    sh.set_defaults(fn=cmd_shoot)
 
     args = p.parse_args(argv)
     return args.fn(args)

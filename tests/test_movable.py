@@ -31,7 +31,7 @@ def test_extrude_stands_on_the_floor_with_photo_uvs():
     lines = text.splitlines()
     v = np.array([[float(x) for x in l.split()[1:]] for l in lines if l.startswith("v ")])
     vt = np.array([[float(x) for x in l.split()[1:]] for l in lines if l.startswith("vt ")])
-    assert len(v) == len(vt) and len(v) % 2 == 0
+    assert len(vt) == len(v) + 1 and len(v) % 2 == 0   # one extra UV colours the sides
     assert v[:, 2].min() == 0.0 and v[:, 2].max() == pytest.approx(height)
     assert abs(v[:, 0].mean()) < 1e-3 and abs(v[:, 1].mean()) < 1e-3     # centred
     assert 0.6 < vt[:, 0].mean() < 0.72 and 0.5 < vt[:, 1].mean() < 0.7  # right of centre, upper half

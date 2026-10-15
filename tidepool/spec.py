@@ -44,6 +44,7 @@ class Spec:
     spawn_yaw: float = 0.0
     toys: list[ToyCall] = field(default_factory=list)
     photo: Photo | None = None
+    shoot: dict[str, Any] = field(default_factory=dict)
     source: Path | None = None
 
 
@@ -97,10 +98,15 @@ def parse(raw: dict[str, Any], default_name: str = "scene", base: Path | None = 
             raise SpecError(f"toys[{i}] ({kind}): parameters must be a mapping")
         toys.append(ToyCall(str(kind), dict(params)))
 
-    known = {"name", "description", "look", "spawn", "toys", "photo"}
+    known = {"name", "description", "look", "spawn", "toys", "photo", "shoot"}
     extra = set(raw) - known
     if extra:
         raise SpecError(f"unknown top-level keys: {', '.join(sorted(extra))}")
+    from . import shoot as shoot_mod
+    try:
+        shoot = shoot_mod.check(raw.get("shoot"))
+    except shoot_mod.ShootError as e:
+        raise SpecError(str(e)) from None
 
     return Spec(
         name=name,
@@ -110,6 +116,7 @@ def parse(raw: dict[str, Any], default_name: str = "scene", base: Path | None = 
         spawn_yaw=float(spawn.get("yaw", 0.0)),
         toys=toys,
         photo=photo,
+        shoot=shoot,
     )
 
 
@@ -120,7 +127,7 @@ def _photo(raw: Any, base: Path) -> Photo | None:
         raw = {"file": raw}
     if not isinstance(raw, dict) or "file" not in raw:
         raise SpecError("photo must be a path or a mapping with 'file'")
-    known = {"file", "width", "relief", "cells", "style", "gamma", "quant", "clear", "flatten", "movable"}
+    known = {"file", "width", "relief", "cells", "style", "gamma", "quant", "clear", "flatten", "movable", "inpaint"}
     extra = set(raw) - known
     if extra:
         raise SpecError(f"photo: unknown keys {', '.join(sorted(extra))}; takes {', '.join(sorted(known))}")
@@ -130,6 +137,7 @@ def _photo(raw: Any, base: Path) -> Photo | None:
     try:
         return Photo(
             movable=_movable(raw.get("movable"), base),
+            inpaint=str(raw.get("inpaint", Photo.inpaint)),
             file=file,
             width=float(raw.get("width", Photo.width)),
             relief=float(raw.get("relief", Photo.relief)),

@@ -23,7 +23,8 @@ from PIL import Image, ImageFilter
 
 from . import depth as depth_mod
 
-TEXTURE = "photo.png"
+TEXTURE = "photo.png"        # the floor: the photo with movables filled in
+TEXTURE_RAW = "photo_raw.png"  # the movables: the photo as taken
 TEXTURE_WIDTH = 2048
 FINE = 6            # visual vertices per collision cell
 EPS = 0.004         # below this a cell is floor
@@ -51,6 +52,7 @@ class Photo:
     clear: float = 0.36     # flat circle around the spawn
     flatten: bool = True    # subtract the perspective slope so only objects stand up
     movable: list[Movable] = field(default_factory=list)
+    inpaint: str = "lama"   # how the floor is filled where a movable was: lama, fast, none
 
 
 @dataclass
@@ -323,17 +325,21 @@ def extrude(mask: np.ndarray, hm: np.ndarray, m: Movable, f: _Frame) -> tuple[st
         for x, y in ring:
             v.append(f"v {x - cx:.4f} {y - cy:.4f} {z:.4f}")
             vt.append(f"vt {(x + f.width / 2) / f.width:.4f} {(y + f.depth / 2) / f.depth:.4f}")
+    # The sides have no picture of their own (the photo looks straight down), so
+    # they take the colour at the middle of the object: one extra UV.
+    vt.append(f"vt {(xs.mean() + 0.5) / w:.4f} {1 - (ys.mean() + 0.5) / h:.4f}")
     n = len(ring)
+    side = 2 * n + 1
     bot = lambda k: k + 1
     top = lambda k: n + k + 1
     faces = []
     for k in range(1, n - 1):
         faces.append(f"f {top(0)}/{top(0)} {top(k)}/{top(k)} {top(k + 1)}/{top(k + 1)}")
-        faces.append(f"f {bot(0)}/{bot(0)} {bot(k + 1)}/{bot(k + 1)} {bot(k)}/{bot(k)}")
+        faces.append(f"f {bot(0)}/{side} {bot(k + 1)}/{side} {bot(k)}/{side}")
     for k in range(n):
         a, b, c, d = bot(k), bot((k + 1) % n), top((k + 1) % n), top(k)
-        faces.append(f"f {a}/{a} {b}/{b} {c}/{c}")
-        faces.append(f"f {a}/{a} {c}/{c} {d}/{d}")
+        faces.append(f"f {a}/{side} {b}/{side} {c}/{side}")
+        faces.append(f"f {a}/{side} {c}/{side} {d}/{side}")
     text = "\n".join(v + vt + faces) + "\n"
     return text, [round(float(cx), 4), round(float(cy), 4), LIFT], height
 
@@ -370,7 +376,7 @@ def terrain(photo: Photo, cache_dir: Path) -> Terrain:
         t.meshes.append({"name": name, "file": f"assets/{name}.obj"})
         t.objects.append({
             "name": name, "shape": "mesh", "mesh": name, "kind": "dynamic",
-            "mass": m.mass, "material": "photo", "friction": "wood", "pos": pos,
+            "mass": m.mass, "material": "photo_raw", "friction": "wood", "pos": pos,
         })
         if t.face is None:
             t.face = (pos[0], pos[1])
@@ -387,16 +393,30 @@ def write_assets(photo: Photo, t: Terrain, out: Path) -> None:
         (out / rel).write_text(text)
     img = Image.open(photo.file).convert("RGB")
     w = min(TEXTURE_WIDTH, img.width)
-    img = img.resize((w, max(1, round(img.height * w / img.width))))
-    img.save(out / TEXTURE, optimize=True)
+    size = (w, max(1, round(img.height * w / img.width)))
+    if photo.movable:
+        from . import inpaint
+
+        img.resize(size).save(out / TEXTURE_RAW, optimize=True)
+        hole = np.zeros((img.height, img.width), bool)
+        for m in photo.movable:
+            hole |= read_mask(m.mask, hole.shape)
+        img = inpaint.fill(img, hole, photo.inpaint)
+    img.resize(size).save(out / TEXTURE, optimize=True)
 
 
 def apply(doc: dict[str, Any], photo: Photo, t: Terrain) -> None:
     """Put the terrain into an mjscene document in place."""
-    doc.setdefault("materials", []).append({
+    mats = doc.setdefault("materials", [])
+    mats.append({
         "name": "photo", "rgba": [1, 1, 1, 1],
         "texture": {"file": TEXTURE}, "texrepeat": [1, 1], "texuniform": False,
     })
+    if photo.movable:
+        mats.append({
+            "name": "photo_raw", "rgba": [1, 1, 1, 1],
+            "texture": {"file": TEXTURE_RAW}, "texrepeat": [1, 1], "texuniform": False,
+        })
     if t.meshes:
         doc.setdefault("meshes", []).extend(t.meshes)
     doc["ground"] = {"material": "photo", "friction": "wood", "size": list(t.size)}
