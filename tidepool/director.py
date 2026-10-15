@@ -98,9 +98,55 @@ def yaw_of(quat) -> float:
     return math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
 
 
+def wear(skin: Path) -> None:
+    """Make every jumper.xml load with the skin's upper shell.
+
+    play never loads the robot packed in a .map, so the shell is swapped where
+    the model is read instead.
+    """
+    import tempfile
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    import mujoco
+
+    root = Path(tempfile.mkdtemp(prefix="tidepool-skin-"))
+    with zipfile.ZipFile(skin) as z:
+        z.extractall(root)
+    robot = root / "assembled" / "jumper"
+    xml = ET.parse(robot / "robot.xml").getroot()
+    meshdir = robot / (xml.find("compiler").get("meshdir", "") if xml.find("compiler") is not None else "")
+    files = {m.get("name"): m.get("file") for m in xml.iter("mesh")}
+    parts = [(str((meshdir / files[g.get("mesh")]).resolve()), [float(v) for v in g.get("rgba", "1 1 1 1").split()])
+             for g in xml.iter("geom") if (g.get("name") or "").startswith("shellflow_upper_")]
+    if not parts:
+        raise SystemExit(f"[shoot] {skin}: no upper shell in this skin")
+
+    load = mujoco.MjSpec.from_file
+
+    def from_file(path, *a, **kw):
+        spec = load(path, *a, **kw)
+        if Path(path).name != "jumper.xml":
+            return spec
+        old = spec.geom("upper_shell_link_visual")
+        body = old.parent
+        cls = old.classname
+        spec.delete(old)
+        for i, (file, rgba) in enumerate(parts):
+            spec.add_mesh(name=f"skin_upper_{i}", file=file)
+            body.add_geom(name=f"skin_upper_{i}", type=mujoco.mjtGeom.mjGEOM_MESH,
+                          meshname=f"skin_upper_{i}", rgba=rgba, density=0,
+                          contype=0, conaffinity=0, group=2)
+        return spec
+
+    mujoco.MjSpec.from_file = staticmethod(from_file)
+
+
 def run(cfg: dict) -> None:
     jumper = Path(cfg["jumper"])
     sys.path.insert(0, str(jumper / "scripts"))
+    if cfg.get("skin"):
+        wear(Path(cfg["skin"]))
     import play  # jumper's entry point
 
     sys.argv = ["play.py", "--app", cfg["app"], "--scene", cfg["map"], "--backend", "native",

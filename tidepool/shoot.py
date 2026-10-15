@@ -65,11 +65,12 @@ def check(raw: Any) -> dict[str, Any]:
 
 
 def film(map_path: Path, shoot: dict[str, Any], out: Path, *, watch: list[str] | None = None,
-         app: Path | None = None) -> int:
+         app: Path | None = None, skin: Path | None = None) -> int:
     app = app or paths.default_app()
     bundle = _bundle_dir(app)
     cfg = {**shoot, "jumper": str(paths.jumper()), "app": str(app), "bundle": str(bundle),
-           "map": str(map_path), "out": str(out), "watch": shoot.get("watch") or watch or []}
+           "map": str(map_path), "out": str(out), "watch": shoot.get("watch") or watch or [],
+           "skin": str(skin) if skin else None}
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump(cfg, f)

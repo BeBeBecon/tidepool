@@ -132,7 +132,7 @@ def cmd_shoot(args) -> int:
     out = Path(args.out or paths.out_dir() / s.name / f"{s.name}.mp4")
     watch = [m.name for m in s.photo.movable] if s.photo else []
     try:
-        return shoot_mod.film(target, s.shoot, out, watch=watch)
+        return shoot_mod.film(target, s.shoot, out, watch=watch, skin=s.skin)
     except paths.MissingRepo as e:
         raise SystemExit(f"error: {e}") from None
 

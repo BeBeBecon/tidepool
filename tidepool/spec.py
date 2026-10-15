@@ -45,6 +45,7 @@ class Spec:
     toys: list[ToyCall] = field(default_factory=list)
     photo: Photo | None = None
     shoot: dict[str, Any] = field(default_factory=dict)
+    skin: Path | None = None   # .skin the crab wears; the map's default otherwise
     source: Path | None = None
 
 
@@ -98,7 +99,13 @@ def parse(raw: dict[str, Any], default_name: str = "scene", base: Path | None = 
             raise SpecError(f"toys[{i}] ({kind}): parameters must be a mapping")
         toys.append(ToyCall(str(kind), dict(params)))
 
-    known = {"name", "description", "look", "spawn", "toys", "photo", "shoot"}
+    skin = raw.get("skin")
+    if skin is not None:
+        skin = ((base or Path.cwd()) / str(skin)).resolve()
+        if not skin.exists():
+            raise SpecError(f"skin: {skin} not found")
+
+    known = {"name", "description", "look", "spawn", "toys", "photo", "shoot", "skin"}
     extra = set(raw) - known
     if extra:
         raise SpecError(f"unknown top-level keys: {', '.join(sorted(extra))}")
@@ -117,6 +124,7 @@ def parse(raw: dict[str, Any], default_name: str = "scene", base: Path | None = 
         toys=toys,
         photo=photo,
         shoot=shoot,
+        skin=skin,
     )
 
 

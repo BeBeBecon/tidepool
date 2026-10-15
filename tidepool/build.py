@@ -56,6 +56,8 @@ def build(spec: Spec, out: Path | None = None, *, verify: bool = True, preview: 
             "--profile", str(paths.profile())]
     if preview is not None:
         args += ["--preview", str(preview)]
+    if spec.skin is not None:
+        args += ["--default-skin", str(spec.skin)]
     report = _shellflow(*args)
     if verify:
         report["verify"] = _shellflow("verify-package", str(target),
