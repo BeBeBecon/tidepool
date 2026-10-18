@@ -137,6 +137,26 @@ def cmd_shoot(args) -> int:
         raise SystemExit(f"error: {e}") from None
 
 
+def cmd_shellify(args) -> int:
+    from . import shell
+
+    photo = Path(args.photo)
+    if not photo.exists():
+        print(f"no such photo: {photo}", file=sys.stderr)
+        return 1
+    name = args.name or re.sub(r"[^A-Za-z0-9_.-]+", "-", photo.stem).strip("-").lower() or "shell"
+    colors = [c.strip() for c in args.colors.split(",")] if args.colors else None
+    try:
+        skin = shell.make(photo, name, colors=colors, length=args.length)
+    except (shell.ShellError, paths.MissingRepo) as e:
+        raise SystemExit(f"error: {e}") from None
+    png = skin.with_suffix(".png")
+    shell.preview(skin, png)
+    print(f"wrote {skin}" + (f" and {png}" if png.exists() else ""))
+    print(f"wear it in a scene with: skin: {os.path.relpath(skin)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="tidepool", description="A toy box for the Jumper crab robot.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -186,6 +206,14 @@ def main(argv: list[str] | None = None) -> int:
     sh.add_argument("-o", "--out", help="mp4 to write (default: out/<name>/<name>.mp4)")
     sh.add_argument("--rebuild", action="store_true")
     sh.set_defaults(fn=cmd_shoot)
+
+    sf = sub.add_parser("shellify", help="turn a photo of a cup-like thing into a shell the crab wears")
+    sf.add_argument("photo")
+    sf.add_argument("--name")
+    sf.add_argument("--colors", metavar="BODY[,ACCENT]",
+                    help="override the colors picked from the photo, e.g. '#E8A9A0,#F5F2EC'")
+    sf.add_argument("--length", type=float, default=150.0, help="front-to-back size in mm (default 150)")
+    sf.set_defaults(fn=cmd_shellify)
 
     args = p.parse_args(argv)
     return args.fn(args)
