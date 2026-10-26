@@ -237,10 +237,7 @@ def stock_shell():
     return m
 
 
-def make(photo: Path, name: str, *, colors: list[str] | None = None, length: float = 150.0,
-         out: Path | None = None) -> Path:
-    import trimesh
-
+def _fresh(name: str, out: Path | None, colors: list[str] | None) -> Path:
     for c in colors or []:
         if not HEX.match(c):
             raise ShellError(f"color {c!r}: use #RRGGBB")
@@ -248,11 +245,14 @@ def make(photo: Path, name: str, *, colors: list[str] | None = None, length: flo
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
-    sys.path.insert(0, str(paths.jumper_design() / "src"))
-    from shellflow.packages import verify_package
-    from shellflow.simulation import assemble
-    from shellflow.skin_package import export_skin
+    return out
 
+
+def make(photo: Path, name: str, *, colors: list[str] | None = None, length: float = 150.0,
+         out: Path | None = None) -> Path:
+    import trimesh
+
+    out = _fresh(name, out, colors)
     mesh, pixels = reconstruct(photo, out)
     thing = lay_down(mesh, length)
     colored = thing.copy()
@@ -261,13 +261,54 @@ def make(photo: Path, name: str, *, colors: list[str] | None = None, length: flo
     fused = trimesh.boolean.union([stock, trimesh.Trimesh(thing.vertices, thing.faces)], engine="manifold")
     cad = out / f"{name}-shell-mm.stl"
     fused.export(cad)
-
     fused = trimesh.load_mesh(cad, process=True)      # what assemble will see, face for face
     picked = palette(pixels)
     for i, c in enumerate(colors or []):
         picked[i] = c
-    write_ams(out / "ams.3mf", fused, paint(fused, stock, colored), [STOCK_RED] + picked[:2])
+    return package(out, name, cad, paint(fused, stock, colored), [STOCK_RED] + picked[:2])
 
+
+def make_model(kind: str, name: str | None = None, *, colors: list[str] | None = None,
+               out: Path | None = None) -> Path:
+    """One of the built-in shapes (`MODELS`) instead of a photo."""
+    import trimesh
+    from scipy.spatial import cKDTree
+
+    from .shell_models import MODELS
+
+    if kind not in MODELS:
+        raise ShellError(f"no model {kind!r}; have {', '.join(MODELS)}")
+    name = name or kind
+    out = _fresh(name, out, colors)
+    parts, picked = MODELS[kind]()
+    for i, c in enumerate(colors or []):
+        picked[i] = c
+    stock = stock_shell()
+    fused = trimesh.boolean.union([stock] + [m for m, _ in parts], engine="manifold")
+    cad = out / f"{name}-shell-mm.stl"
+    fused.export(cad)
+    fused = trimesh.load_mesh(cad, process=True)
+    # every face takes the color of the nearest part surface
+    pts, labels = [], []
+    for mesh, slot in [(stock, 0)] + parts:
+        p, _ = trimesh.sample.sample_surface_even(mesh, 30000, seed=0)
+        pts.append(p)
+        labels.append(np.full(len(p), slot))
+    _, near = cKDTree(np.vstack(pts)).query(fused.triangles_center)
+    return package(out, name, cad, np.concatenate(labels)[near], [STOCK_RED] + picked)
+
+
+def package(out: Path, name: str, cad: Path, slots: np.ndarray, colors: list[str]) -> Path:
+    """Painted CAD shell -> assembled, exported and verified .skin."""
+    import trimesh
+
+    sys.path.insert(0, str(paths.jumper_design() / "src"))
+    from shellflow.packages import verify_package
+    from shellflow.simulation import assemble
+    from shellflow.skin_package import export_skin
+
+    fused = trimesh.load_mesh(cad, process=True)
+    write_ams(out / "ams.3mf", fused, slots, colors)
     model = out / "assembly"
     assemble(cad, model, paths.profile(), faces=60000)
     report = json.loads((model / "simulation-report.json").read_text(encoding="utf-8"))
@@ -279,7 +320,7 @@ def make(photo: Path, name: str, *, colors: list[str] | None = None, length: flo
     result = verify_package(skin, platform_profile=paths.profile(), mujoco=True)
     if not result.get("ok"):
         raise ShellError(f"verify-package: {json.dumps(result)}")
-    print(f"[shell] colors {' '.join([STOCK_RED] + picked[:2])}")
+    print(f"[shell] colors {' '.join(colors)}")
     return skin
 
 

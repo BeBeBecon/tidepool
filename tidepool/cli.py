@@ -140,14 +140,19 @@ def cmd_shoot(args) -> int:
 def cmd_shellify(args) -> int:
     from . import shell
 
-    photo = Path(args.photo)
-    if not photo.exists():
-        print(f"no such photo: {photo}", file=sys.stderr)
-        return 1
-    name = args.name or re.sub(r"[^A-Za-z0-9_.-]+", "-", photo.stem).strip("-").lower() or "shell"
     colors = [c.strip() for c in args.colors.split(",")] if args.colors else None
+    from .shell_models import MODELS
+
+    photo = Path(args.photo)
     try:
-        skin = shell.make(photo, name, colors=colors, length=args.length)
+        if args.photo in MODELS and not photo.exists():
+            skin = shell.make_model(args.photo, args.name, colors=colors)
+        else:
+            if not photo.exists():
+                print(f"no such photo: {photo} (or use a model: {', '.join(MODELS)})", file=sys.stderr)
+                return 1
+            name = args.name or re.sub(r"[^A-Za-z0-9_.-]+", "-", photo.stem).strip("-").lower() or "shell"
+            skin = shell.make(photo, name, colors=colors, length=args.length)
     except (shell.ShellError, paths.MissingRepo) as e:
         raise SystemExit(f"error: {e}") from None
     png = skin.with_suffix(".png")
@@ -208,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
     sh.set_defaults(fn=cmd_shoot)
 
     sf = sub.add_parser("shellify", help="turn a photo of a cup-like thing into a shell the crab wears")
-    sf.add_argument("photo")
+    sf.add_argument("photo", help="a photo, or a built-in model: sneaker, shiba, box")
     sf.add_argument("--name")
     sf.add_argument("--colors", metavar="BODY[,ACCENT]",
                     help="override the colors picked from the photo, e.g. '#E8A9A0,#F5F2EC'")
