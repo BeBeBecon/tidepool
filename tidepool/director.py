@@ -98,22 +98,14 @@ def yaw_of(quat) -> float:
     return math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
 
 
-def wear(skin: Path) -> None:
-    """Make every jumper.xml load with the skin's upper shell.
-
-    play never loads the robot packed in a .map, so the shell is swapped where
-    the model is read instead.
-    """
-    import tempfile
+def shell_parts(skin: Path, work: Path) -> list[tuple[str, list[float]]]:
+    """The upper shell meshes and colors packed in a .skin."""
     import xml.etree.ElementTree as ET
     import zipfile
 
-    import mujoco
-
-    root = Path(tempfile.mkdtemp(prefix="tidepool-skin-"))
     with zipfile.ZipFile(skin) as z:
-        z.extractall(root)
-    robot = root / "assembled" / "jumper"
+        z.extractall(work)
+    robot = work / "assembled" / "jumper"
     xml = ET.parse(robot / "robot.xml").getroot()
     meshdir = robot / (xml.find("compiler").get("meshdir", "") if xml.find("compiler") is not None else "")
     files = {m.get("name"): m.get("file") for m in xml.iter("mesh")}
@@ -121,12 +113,32 @@ def wear(skin: Path) -> None:
              for g in xml.iter("geom") if (g.get("name") or "").startswith("shellflow_upper_")]
     if not parts:
         raise SystemExit(f"[shoot] {skin}: no upper shell in this skin")
+    return parts
 
+
+def dress(skin: Path | None, eyes) -> None:
+    """Make every jumper.xml load with the skin's shell and, if given, the eye screens.
+
+    play never loads the robot packed in a .map, so this happens where the
+    model is read instead.
+    """
+    import tempfile
+
+    import mujoco
+
+    from . import face
+
+    work = Path(tempfile.mkdtemp(prefix="tidepool-robot-"))
+    parts = shell_parts(skin, work) if skin else []
     load = mujoco.MjSpec.from_file
 
     def from_file(path, *a, **kw):
         spec = load(path, *a, **kw)
         if Path(path).name != "jumper.xml":
+            return spec
+        if eyes is not None:
+            face.add(spec, eyes, work)
+        if not parts:
             return spec
         old = spec.geom("upper_shell_link_visual")
         body = old.parent
@@ -145,8 +157,14 @@ def wear(skin: Path) -> None:
 def run(cfg: dict) -> None:
     jumper = Path(cfg["jumper"])
     sys.path.insert(0, str(jumper / "scripts"))
-    if cfg.get("skin"):
-        wear(Path(cfg["skin"]))
+    from . import face
+
+    clip = None
+    if cfg.get("face", "normal") != "off":
+        clip = face.frames(face.source(jumper))
+        player = face.Player(clip, cfg.get("face", "normal"))
+    dress(Path(cfg["skin"]) if cfg.get("skin") else None,
+          clip[face.FACES["normal"]] if clip is not None else None)
     import play  # jumper's entry point
 
     sys.argv = ["play.py", "--app", cfg["app"], "--scene", cfg["map"], "--backend", "native",
@@ -191,6 +209,9 @@ def run(cfg: dict) -> None:
         target = [float(data.xpos[watch[0]][0]), float(data.xpos[watch[0]][1])] if watch else None
         cam = Camera(cfg.get("camera") or {}, target)
         gname = lambda g: mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or f"g{g}"
+        eye = next((i for i in range(model.ntex)
+                    if (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_TEXTURE, i) or "").endswith("tp_eye")), None)
+        shown = None
 
         fps = float(cfg.get("fps", 50))
         every = max(1, round(hz / fps))
@@ -236,6 +257,8 @@ def run(cfg: dict) -> None:
                     press(*keys[mode], step=step)
             if "claw" in e:
                 press(*keys[f"claw_{e['claw']}"], step=step)
+            if "face" in e and clip is not None:
+                player.set(str(e["face"]), step * step_dt)
 
         for step in range(total):
             t = step * step_dt
@@ -257,6 +280,13 @@ def run(cfg: dict) -> None:
             log.append({"t": round(t, 4), "root": [round(float(v), 4) for v in data.qpos[:7]],
                         "watch": [[round(float(v), 4) for v in data.xpos[w]] for w in watch], "hits": hits})
             if step % every == 0:
+                if eye is not None:
+                    k = player.frame(t)
+                    if k != shown:
+                        adr = model.tex_adr[eye]
+                        model.tex_data[adr:adr + clip[k].size] = clip[k].ravel()
+                        mujoco.mjr_uploadTexture(model, renderer._mjr_context, eye)
+                        shown = k
                 renderer.update_scene(data, cam.update(data.qpos[:3], yaw_of(data.qpos[3:7])))
                 writer.append_data(renderer.render())
             if step % int(hz) == 0:

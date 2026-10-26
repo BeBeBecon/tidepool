@@ -25,7 +25,7 @@ from typing import Any
 from . import paths
 
 PRESETS = ("chase", "side", "low", "top")
-ACTIONS = {"at", "walk", "turn", "speed", "stop", "jump", "dance", "gesture", "claw"}
+ACTIONS = {"at", "walk", "turn", "speed", "stop", "jump", "dance", "gesture", "claw", "face"}
 
 
 class ShootError(ValueError):
@@ -37,7 +37,7 @@ def check(raw: Any) -> dict[str, Any]:
         return {}
     if not isinstance(raw, dict):
         raise ShootError("shoot must be a mapping")
-    extra = set(raw) - {"camera", "size", "speed", "fps", "script", "duration", "start", "shadows", "watch"}
+    extra = set(raw) - {"camera", "size", "speed", "fps", "script", "duration", "start", "shadows", "watch", "face"}
     if extra:
         raise ShootError(f"shoot: unknown keys {', '.join(sorted(extra))}")
     cam = raw.get("camera") or {}
