@@ -27,5 +27,8 @@ tidepool = "tidepool.cli:main"
 [tool.setuptools.packages.find]
 include = ["tidepool*"]
 
+[tool.setuptools.package-data]
+tidepool = ["*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

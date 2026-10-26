@@ -162,6 +162,33 @@ def cmd_shellify(args) -> int:
     return 0
 
 
+def cmd_closet(args) -> int:
+    from . import closet
+
+    if args.skins:
+        skins = [Path(s) for s in args.skins]
+    else:
+        skins = sorted((p for p in paths.out_dir().glob("*/*.skin") if not p.parent.name.startswith("spike")),
+                       key=lambda p: p.stat().st_mtime)
+    missing = [s for s in skins if not s.exists()]
+    if missing:
+        print(f"no such skin: {missing[0]}", file=sys.stderr)
+        return 1
+    if not skins:
+        print("no shells yet: make one with `tidepool shellify`", file=sys.stderr)
+        return 1
+    out = paths.out_dir() / "closet"
+    try:
+        closet.export(skins, out)
+    except paths.MissingRepo as e:
+        raise SystemExit(f"error: {e}") from None
+    size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file()) / 1e6
+    print(f"[closet] {len(skins) + 1} shells, {size:.1f} MB in {out}")
+    if not args.no_serve:
+        closet.serve(out, args.port, open_browser=not args.no_open)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="tidepool", description="A toy box for the Jumper crab robot.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -219,6 +246,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="override the colors picked from the photo, e.g. '#E8A9A0,#F5F2EC'")
     sf.add_argument("--length", type=float, default=150.0, help="front-to-back size in mm (default 150)")
     sf.set_defaults(fn=cmd_shellify)
+
+    cl = sub.add_parser("closet", help="try every shell on the crab in the browser")
+    cl.add_argument("skins", nargs="*", help=".skin files (default: everything under out/)")
+    cl.add_argument("--port", type=int, default=8765)
+    cl.add_argument("--no-open", action="store_true", help="serve, but don't open a browser")
+    cl.add_argument("--no-serve", action="store_true", help="only write out/closet/")
+    cl.set_defaults(fn=cmd_closet)
 
     args = p.parse_args(argv)
     return args.fn(args)

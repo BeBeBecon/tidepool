@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tidepool closet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Shantell+Sans:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1f3330;
+    --paper: #fbf6ea;
+    --sand: #efe2c6;
+    --foam: #dcebe6;
+    --kelp: #2f5d50;
+    --coral: #d9533b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: linear-gradient(180deg, var(--foam) 0%, #e8eadb 55%, var(--sand) 100%);
+    color: var(--ink);
+    font-family: "Shantell Sans", "Comic Sans MS", system-ui, sans-serif;
+  }
+  canvas { display: block; }
+  .ui { transition: opacity .25s; }
+  body.clean .ui { opacity: 0; pointer-events: none; }
+
+  header { position: fixed; top: 16px; left: 20px; line-height: 1; }
+  header h1 { margin: 0; font-size: 34px; font-weight: 700; letter-spacing: -0.5px; }
+  header p { margin: 6px 0 0 2px; font-size: 14px; opacity: .7; }
+
+  #shells {
+    position: fixed; left: 0; right: 0; bottom: 18px;
+    display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; padding: 0 16px;
+  }
+  .tag {
+    position: relative; cursor: pointer; border: 1.5px solid var(--ink);
+    background: var(--paper); color: var(--ink); font: inherit; font-size: 17px;
+    padding: 9px 16px 9px 30px; border-radius: 3px 14px 14px 3px;
+    box-shadow: 2px 3px 0 rgba(31, 51, 48, .18);
+    transform: rotate(var(--tilt, 0deg)); transition: transform .15s, background .15s;
+  }
+  .tag::before {
+    content: ""; position: absolute; left: 11px; top: 50%; width: 8px; height: 8px;
+    margin-top: -4px; border-radius: 50%; border: 1.5px solid var(--ink); background: var(--sand);
+  }
+  .tag:hover { transform: rotate(0deg) translateY(-3px); }
+  .tag.on { background: var(--ink); color: var(--paper); }
+  .tag.on::before { background: var(--coral); border-color: var(--paper); }
+  .tag kbd { font: inherit; font-size: 12px; opacity: .55; margin-left: 6px; }
+
+  #cams {
+    position: fixed; right: 18px; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .stamp {
+    width: 62px; height: 62px; border-radius: 50%; cursor: pointer;
+    border: 2px dashed var(--kelp); background: rgba(251, 246, 234, .75);
+    color: var(--kelp); font: inherit; font-size: 14px; font-weight: 700;
+  }
+  .stamp.on { border-style: solid; background: var(--kelp); color: var(--paper); }
+
+  #faces { position: fixed; top: 16px; right: 18px; display: flex; gap: 8px; }
+  .eye {
+    width: 42px; height: 42px; padding: 5px; border-radius: 10px; cursor: pointer;
+    border: 1.5px solid var(--ink); background: #0b1312;
+  }
+  .eye img { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+  .eye.on { outline: 3px solid var(--coral); outline-offset: 2px; }
+
+  #keys { position: fixed; left: 22px; top: 78px; font-size: 12px; opacity: .55; max-width: 220px; }
+  @media (max-width: 700px) {
+    #cams { top: auto; bottom: 92px; transform: none; flex-direction: row; right: 16px; }
+    .stamp { width: 50px; height: 50px; font-size: 12px; }
+    #keys { display: none; }
+    header h1 { font-size: 26px; }
+  }
+</style>
+</head>
+<body>
+<header class="ui"><h1>closet</h1><p>pick a shell. the crab moves in.</p></header>
+<div id="faces" class="ui"></div>
+<div id="cams" class="ui"></div>
+<div id="shells" class="ui"></div>
+<div id="keys" class="ui">1-9 or arrows: shell &middot; C: camera &middot; F: face &middot; H: hide all this</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const manifest = await (await fetch("closet.json")).json();
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;   // keep the shell colors as painted
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.01, 20);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0, 0.13, 0);
+controls.minDistance = 0.3;
+controls.maxDistance = 2.5;
+
+scene.add(new THREE.HemisphereLight(0xf4f1e6, 0x9c8a66, 1.1));
+const sun = new THREE.DirectionalLight(0xfff3dc, 1.5);
+sun.position.set(0.8, 1.6, 0.6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -0.6, right: 0.6, top: 0.6, bottom: -0.6, near: 0.1, far: 4 });
+sun.shadow.bias = -0.0004;
+scene.add(sun);
+
+const floor = new THREE.Mesh(new THREE.CircleGeometry(0.9, 64), new THREE.MeshStandardMaterial({ color: 0xe6d3aa, roughness: 1 }));
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// MuJoCo is z-up, three is y-up
+const crab = new THREE.Group();
+crab.rotation.x = -Math.PI / 2;
+scene.add(crab);
+
+const loader = new GLTFLoader();
+const load = (url) => new Promise((ok, no) => loader.load(url, (g) => {
+  g.scene.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  ok(g.scene);
+}, undefined, no));
+
+crab.add(await load("body.glb"));
+const shells = {};
+await Promise.all(manifest.shells.map(async (s) => { shells[s.id] = await load(`shells/${s.id}.glb`); }));
+
+// eyes
+const tex = {};
+const texLoader = new THREE.TextureLoader();
+for (const f of manifest.faces) {
+  tex[f] = texLoader.load(`eyes/${f}.png`);
+  tex[f].colorSpace = THREE.SRGBColorSpace;
+  tex[f].magFilter = THREE.NearestFilter;
+}
+const eyeMat = new THREE.MeshBasicMaterial({ map: tex.normal, toneMapped: false });
+for (const q of manifest.eyes) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(q.flat(), 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
+  g.setIndex([0, 1, 2, 0, 2, 3]);
+  crab.add(new THREE.Mesh(g, eyeMat));
+}
+
+let face = "normal";
+let faceUntil = 0, faceAfter = "normal";
+function setFace(f, holdFor = 0, after = "normal") {
+  face = f;
+  faceUntil = holdFor ? performance.now() + holdFor : 0;
+  faceAfter = after;
+  document.querySelectorAll(".eye").forEach((b) => b.classList.toggle("on", b.dataset.f === face));
+}
+
+// shells: the old one lifts off, the new one drops in
+let current = null, moving = null;
+function wear(id) {
+  if (!shells[id] || id === current?.id) return;
+  const next = { id, obj: shells[id] };
+  const prev = current;
+  next.obj.position.set(0, 0, 0.25);
+  next.obj.scale.setScalar(1);
+  crab.add(next.obj);
+  moving = { prev, next, t0: performance.now() };
+  current = next;
+  setFace("surprised", 650, "happy");
+  setTimeout(() => { if (current === next) setFace("happy", 1400, "normal"); }, 650);
+  document.querySelectorAll(".tag").forEach((b) => b.classList.toggle("on", b.dataset.id === id));
+  try { localStorage.setItem("closet.shell", id); } catch {}
+}
+const ease = (x) => 1 - Math.pow(1 - x, 3);
+const bounce = (x) => {
+  const n = 7.5625, d = 2.75;
+  if (x < 1 / d) return n * x * x;
+  if (x < 2 / d) return n * (x -= 1.5 / d) * x + 0.75;
+  if (x < 2.5 / d) return n * (x -= 2.25 / d) * x + 0.9375;
+  return n * (x -= 2.625 / d) * x + 0.984375;
+};
+function stepMove(now) {
+  if (!moving) return;
+  const t = (now - moving.t0) / 1000;
+  if (moving.prev) {
+    const a = Math.min(1, t / 0.35);
+    moving.prev.obj.position.z = 0.3 * ease(a);
+    moving.prev.obj.scale.setScalar(1 - a);
+    if (a >= 1) crab.remove(moving.prev.obj);
+  }
+  const b = Math.min(1, Math.max(0, (t - 0.2) / 0.6));
+  moving.next.obj.position.z = 0.25 * (1 - bounce(b));
+  if (b >= 1 && (!moving.prev || t > 0.35)) moving = null;
+}
+
+// cameras, in three's y-up frame: +x is where the crab faces
+const cams = {
+  "3/4": [0.78, 0.42, 0.7], front: [1.05, 0.24, 0.0], side: [0.0, 0.24, 1.05],
+  top: [0.02, 1.2, 0.0], low: [0.7, 0.06, 0.38],
+};
+let camTween = null, camName = "3/4";
+function look(name, instant = false) {
+  camName = name;
+  const to = new THREE.Vector3(...cams[name]);
+  if (instant) camera.position.copy(to);
+  else camTween = { from: camera.position.clone(), to, t0: performance.now() };
+  document.querySelectorAll(".stamp").forEach((b) => b.classList.toggle("on", b.dataset.c === name));
+}
+
+// ui
+const shellBox = document.getElementById("shells");
+manifest.shells.forEach((s, i) => {
+  const b = document.createElement("button");
+  b.className = "tag";
+  b.dataset.id = s.id;
+  b.style.setProperty("--tilt", `${((i * 37) % 7) - 3}deg`);
+  b.innerHTML = `${s.title}<kbd>${i + 1}</kbd>`;
+  b.onclick = () => wear(s.id);
+  shellBox.append(b);
+});
+const camBox = document.getElementById("cams");
+for (const c of Object.keys(cams)) {
+  const b = document.createElement("button");
+  b.className = "stamp";
+  b.dataset.c = c;
+  b.textContent = c;
+  b.onclick = () => look(c);
+  camBox.append(b);
+}
+const faceBox = document.getElementById("faces");
+for (const f of manifest.faces) {
+  if (f === "blink") continue;
+  const b = document.createElement("button");
+  b.className = "eye";
+  b.dataset.f = f;
+  b.title = f;
+  b.innerHTML = `<img src="eyes/${f}.png" alt="${f}">`;
+  b.onclick = () => setFace(f);
+  faceBox.append(b);
+}
+
+addEventListener("keydown", (e) => {
+  const ids = manifest.shells.map((s) => s.id);
+  const i = ids.indexOf(current?.id);
+  if (/^[1-9]$/.test(e.key)) wear(ids[+e.key - 1]);
+  else if (e.key === "ArrowRight" || e.key === " ") wear(ids[(i + 1) % ids.length]);
+  else if (e.key === "ArrowLeft") wear(ids[(i - 1 + ids.length) % ids.length]);
+  else if (e.key.toLowerCase() === "c") { const k = Object.keys(cams); look(k[(k.indexOf(camName) + 1) % k.length]); }
+  else if (e.key.toLowerCase() === "f") { const f = manifest.faces.filter((x) => x !== "blink"); setFace(f[(f.indexOf(face) + 1) % f.length]); }
+  else if (e.key.toLowerCase() === "h") document.body.classList.toggle("clean");
+  else return;
+  e.preventDefault();
+});
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ?shell=box&cam=front&face=sparkle&clean=1 sets up a shot
+const q = new URLSearchParams(location.search);
+let saved = q.get("shell");
+if (!saved) { try { saved = localStorage.getItem("closet.shell"); } catch {} }
+look(cams[q.get("cam")] ? q.get("cam") : "3/4", true);
+wear(shells[saved] ? saved : manifest.shells[manifest.shells.length > 1 ? 1 : 0].id);
+if (q.get("face")) setTimeout(() => setFace(q.get("face")), 2100);
+if (q.get("clean")) document.body.classList.add("clean");
+
+renderer.setAnimationLoop((now) => {
+  stepMove(now);
+  if (camTween) {
+    const a = Math.min(1, (now - camTween.t0) / 600);
+    camera.position.lerpVectors(camTween.from, camTween.to, ease(a));
+    if (a >= 1) camTween = null;
+  }
+  if (faceUntil && now > faceUntil) setFace(faceAfter);
+  const blinking = ["normal", "wide", "surprised"].includes(face) && (now / 1000) % 3.2 < 0.12;
+  eyeMat.map = tex[blinking ? "blink" : face];
+  crab.position.y = 0.0015 * Math.sin(now / 420);
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
