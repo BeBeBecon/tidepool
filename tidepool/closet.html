@@ -98,6 +98,9 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 
 const manifest = await (await fetch("closet.json")).json();
+// glossy like the MuJoCo renders the videos come from; ?look=web for the official site's matte
+const q = new URLSearchParams(location.search);
+const glossy = q.get("look") !== "web";
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -142,16 +145,20 @@ const loader = new GLTFLoader();
 const load = (url) => new Promise((ok, no) => loader.load(url, (g) => {
   g.scene.traverse((o) => {
     if (!o.isMesh) return;
-    o.geometry = toCreasedNormals(o.geometry, THREE.MathUtils.degToRad(35));
+    o.geometry = toCreasedNormals(o.geometry, THREE.MathUtils.degToRad(glossy ? 60 : 35));
     o.castShadow = true;
     o.receiveShadow = true;
   });
   ok(g.scene);
 }, undefined, no));
 
+const finish = (root) => root.traverse((o) => {
+  if (o.isMesh && glossy) { o.material.roughness = 0.28; o.material.needsUpdate = true; }
+});
 crab.add(await load("body.glb"));
+finish(crab);
 const shells = {};
-await Promise.all(manifest.shells.map(async (s) => { shells[s.id] = await load(`shells/${s.id}.glb`); }));
+await Promise.all(manifest.shells.map(async (s) => { shells[s.id] = await load(`shells/${s.id}.glb`); finish(shells[s.id]); }));
 
 // eyes
 const tex = {};
@@ -282,7 +289,6 @@ addEventListener("resize", () => {
 });
 
 // ?shell=box&cam=front&face=sparkle&clean=1 sets up a shot
-const q = new URLSearchParams(location.search);
 let saved = q.get("shell");
 if (!saved) { try { saved = localStorage.getItem("closet.shell"); } catch {} }
 look(cams[q.get("cam")] ? q.get("cam") : "3/4", true);

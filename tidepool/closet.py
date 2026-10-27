@@ -82,7 +82,7 @@ def _is_visual(m, g) -> bool:
             and m.geom_conaffinity[g] == 0 and m.geom_group[g] in (0, 2))
 
 
-def export(skins: list[Path], out: Path, keep: float = 0.25) -> dict:
+def export(skins: list[Path], out: Path, keep: float = 0.5) -> dict:
     import mujoco
     import trimesh
 
@@ -111,13 +111,13 @@ def export(skins: list[Path], out: Path, keep: float = 0.25) -> dict:
             stock = trimesh.load_mesh(paths.profile().parent / "meshes/visual/upper_shell_link.stl")
             b = m.body("upper_shell_link").id
             stock.apply_transform(_pose(d.xmat[b], d.xpos[b]))
-            _glb({tuple(STOCK_RGBA): [stock]}, out / "shells" / "stock.glb", 0.25)
+            _glb({tuple(STOCK_RGBA): [stock]}, out / "shells" / "stock.glb", 1.0)
             entries.append({"id": "stock", "title": "Stock"})
             base = m.body("base_link").id
             eyes = _eye_quads(d.xmat[base].reshape(3, 3), d.xpos[base])
             print(f"[closet] body {n} faces")
             body_done = True
-        _glb(shell, out / "shells" / f"{skin.stem}.glb", 0.3)
+        _glb(shell, out / "shells" / f"{skin.stem}.glb", 0.6)
         entries.append({"id": skin.stem, "title": skin.stem.replace("-", " ").replace("_", " ")})
 
     clip = face.frames(face.source(paths.jumper()))
