@@ -2,7 +2,7 @@
 
 Millimetres, front is -y, up is +z, and the stock shell's top is at z = 78.7.
 Each model returns its parts as (mesh, color slot) and the colors of slots 1-3;
-slot 0 is the stock shell.
+slot 0 is the stock shell, red unless the model gives a third value.
 """
 
 from __future__ import annotations
@@ -93,4 +93,48 @@ def crate():
     return [(shell, 1), (flap, 1), (tape, 2), (label, 3)], ["#C8A26A", "#9C7440", "#F4F2EE"]
 
 
-MODELS = {"sneaker": sneaker, "shiba": shiba, "box": crate}
+def blade(spine, width, thick):
+    """A flat strip of varying width along a 2D spine (x, z), `thick` mm deep in y. Watertight."""
+    spine = np.asarray(spine, float)
+    d = np.gradient(spine, axis=0)
+    n = np.c_[-d[:, 1], d[:, 0]] / np.linalg.norm(d, axis=1)[:, None]
+    left, right = spine + n * width[:, None] / 2, spine - n * width[:, None] / 2
+    ring = np.vstack([left, right[::-1]])                       # outline, once round
+    k = len(spine)
+    v = np.vstack([np.c_[ring[:, 0], np.full(len(ring), -thick / 2), ring[:, 1]],
+                   np.c_[ring[:, 0], np.full(len(ring), thick / 2), ring[:, 1]]])
+    m = len(ring)
+    f = []
+    for i in range(k - 1):                                       # front and back faces as a strip
+        a, b, c, e = i, i + 1, 2 * k - 2 - i, 2 * k - 1 - i      # left i, left i+1, right i+1, right i
+        f += [[a, c, b], [a, e, c], [a + m, b + m, c + m], [a + m, c + m, e + m]]
+    for i in range(m):                                           # walls
+        j = (i + 1) % m
+        f += [[i, j, j + m], [i, j + m, i + m]]
+    mesh = trimesh.Trimesh(v, f, process=True)
+    mesh.fix_normals()
+    return mesh
+
+
+def kabuto():
+    """Not a thing on the back: the shell itself, blue, with a samurai helmet's horns."""
+    gold, navy = 1, 2
+    t = np.linspace(0, 1, 40)
+    horns = []
+    for side in (1, -1):
+        spine = np.c_[side * (6 + 54 * t ** 1.6), 112 * t]
+        h = blade(spine, 15 * (1 - t) ** 0.6 + 2.0, 5)
+        h.apply_transform(trimesh.transformations.rotation_matrix(np.radians(-14), (1, 0, 0)))
+        h.apply_translation((0, -70, 74))
+        horns.append(h)
+    crest = cyl((0, -76, 82), 15, 7, axis=(0, 1, 0))
+    boss = cyl((0, -80, 82), 8, 4, axis=(0, 1, 0))
+    # the ridge down the middle of a helmet bowl, following the shell's top
+    ys = np.linspace(-62, 62, 14)
+    top = np.interp(ys, [-75, -60, -40, 0, 40, 80], [78.2, 78.7, 78.1, 74.4, 67.1, 55.3])
+    ridge = join(*[blob((0, y, z), (5, 9, 4), sub=2) for y, z in zip(ys, top)])
+    parts = [(h, gold) for h in horns] + [(crest, gold), (boss, navy), (ridge, navy)]
+    return parts, ["#D4A93A", "#14264F"], "#1F4FA8"
+
+
+MODELS = {"sneaker": sneaker, "shiba": shiba, "box": crate, "kabuto": kabuto}

@@ -150,10 +150,57 @@ def lay_down(m, length: float = 150.0, smooth: int = 80):
     if half > HALF_WIDTH:
         m.apply_scale(HALF_WIDTH / half)
     lo, hi = m.bounds
-    m.apply_translation([0, -5 - (lo[1] + hi[1]) / 2, SHELL_TOP - lo[2] - 12])
+    shift = np.array([0, -5 - (lo[1] + hi[1]) / 2, SHELL_TOP - lo[2] - 12])
+    m.apply_translation(shift)
     if smooth:
         trimesh.smoothing.filter_taubin(m, iterations=smooth)
+    # measure the body where it is, from slices: the handle is up, so a slice's
+    # x extent is the body alone and its lowest point is the body's underside
+    v, _ = trimesh.sample.sample_surface_even(m, 20000, seed=0)
+    lo, hi = m.bounds
+    L = hi[1] - lo[1]
+
+    def ring(frac):
+        band = v[np.abs(v[:, 1] - (lo[1] + frac * L)) < L / 14]
+        r = np.ptp(band[:, 0]) / 2
+        return (band[:, 0].max() + band[:, 0].min()) / 2, band[:, 2].min() + r, r
+
+    x0, z0, _ = ring(0.5)
+    m.metadata["cup"] = {"x": float(x0), "z": float(z0), "front": float(lo[1]), "length": float(L),
+                         "r_mouth": float(ring(0.1)[2]), "r_back": float(ring(0.85)[2])}
     return m
+
+
+def hollow(m, wall: float = 5.0, floor: float = 0.15):
+    """Bore the mouth out, since TripoSR fills most of a cup in."""
+    import trimesh
+
+    cup = m.metadata["cup"]
+    depth = cup["length"] * (1 - floor)
+    r0, r1 = cup["r_mouth"] - wall, cup["r_back"] - wall
+    # a frustum along +y from just outside the mouth, wide end at the mouth
+    bore = trimesh.creation.revolve([[0, -10], [r0, -10], [r0, 0], [r1, depth], [0, depth]], sections=64)
+    bore.apply_transform(trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0]))
+    bore.apply_translation([cup["x"], cup["front"], cup["z"]])
+    out = trimesh.boolean.difference([m, bore], engine="manifold")
+    out.metadata["cup"] = dict(cup, depth=depth, wall=wall)
+    return out
+
+
+def paint_cup(shell, stock, cup) -> np.ndarray:
+    """Slot per face: 0 stock, 1 outside, 2 inside and rim."""
+    import trimesh
+    from scipy.spatial import cKDTree
+
+    pts, _ = trimesh.sample.sample_surface_even(stock, 400000, seed=0)
+    c = shell.triangles_center
+    d, _ = cKDTree(pts).query(c)
+    rr = np.hypot(c[:, 0] - cup["x"], c[:, 2] - cup["z"])
+    t = np.clip((c[:, 1] - cup["front"]) / cup["depth"], 0, 1)
+    inner = cup["r_mouth"] + (cup["r_back"] - cup["r_mouth"]) * t - cup["wall"]
+    inside = (rr < inner + 1.5) & (c[:, 1] < cup["front"] + cup["depth"] + 1.5)
+    rim = (c[:, 1] < cup["front"] + 3) & (rr < cup["r_mouth"] + 1)
+    return np.where(d < 0.8, 0, np.where(inside | rim, 2, 1))
 
 
 def palette(pixels: np.ndarray) -> list[str]:
@@ -182,25 +229,6 @@ def palette(pixels: np.ndarray) -> list[str]:
 
 def _hex(c) -> str:
     return "#%02X%02X%02X" % tuple(int(round(v)) for v in c)
-
-
-def paint(shell, stock, colored, smooth: int = 12) -> np.ndarray:
-    """Slot per face of `shell`: 0 stock, 1 body (the warmer half of the colors), 2 accent."""
-    import trimesh
-    from scipy.spatial import cKDTree
-    from skimage.filters import threshold_otsu
-
-    pts, _ = trimesh.sample.sample_surface_even(stock, 400000, seed=0)
-    centers = shell.triangles_center
-    d, _ = cKDTree(pts).query(centers)
-    vc = colored.visual.vertex_colors[:, :3].astype(float)
-    red = vc[:, 0] - vc[:, 2]
-    lab = (red > threshold_otsu(red)).astype(float)
-    # neighbours vote, so a printed pattern doesn't come out as speckle
-    for _ in range(smooth):
-        lab = np.array([lab[n].mean() if len(n) else x for n, x in zip(colored.vertex_neighbors, lab)])
-    _, near = cKDTree(colored.vertices).query(centers)
-    return np.where(d < 0.8, 0, np.where(lab[near] > 0.5, 1, 2))
 
 
 def write_ams(path: Path, mesh, slots: np.ndarray, colors: list[str]) -> None:
@@ -255,8 +283,10 @@ def make(photo: Path, name: str, *, colors: list[str] | None = None, length: flo
     out = _fresh(name, out, colors)
     mesh, pixels = reconstruct(photo, out)
     thing = lay_down(mesh, length)
-    colored = thing.copy()
+    cup = thing.metadata["cup"]
     thing = thing.simplify_quadric_decimation(face_count=30000)
+    thing.metadata["cup"] = cup
+    thing = hollow(thing)
     stock = stock_shell()
     fused = trimesh.boolean.union([stock, trimesh.Trimesh(thing.vertices, thing.faces)], engine="manifold")
     cad = out / f"{name}-shell-mm.stl"
@@ -265,7 +295,7 @@ def make(photo: Path, name: str, *, colors: list[str] | None = None, length: flo
     picked = palette(pixels)
     for i, c in enumerate(colors or []):
         picked[i] = c
-    return package(out, name, cad, paint(fused, stock, colored), [STOCK_RED] + picked[:2])
+    return package(out, name, cad, paint_cup(fused, stock, thing.metadata["cup"]), [STOCK_RED] + picked[:2])
 
 
 def make_model(kind: str, name: str | None = None, *, colors: list[str] | None = None,
@@ -280,7 +310,7 @@ def make_model(kind: str, name: str | None = None, *, colors: list[str] | None =
         raise ShellError(f"no model {kind!r}; have {', '.join(MODELS)}")
     name = name or kind
     out = _fresh(name, out, colors)
-    parts, picked = MODELS[kind]()
+    parts, picked, *base = MODELS[kind]()
     for i, c in enumerate(colors or []):
         picked[i] = c
     stock = stock_shell()
@@ -295,7 +325,7 @@ def make_model(kind: str, name: str | None = None, *, colors: list[str] | None =
         pts.append(p)
         labels.append(np.full(len(p), slot))
     _, near = cKDTree(np.vstack(pts)).query(fused.triangles_center)
-    return package(out, name, cad, np.concatenate(labels)[near], [STOCK_RED] + picked)
+    return package(out, name, cad, np.concatenate(labels)[near], [base[0] if base else STOCK_RED] + picked)
 
 
 def package(out: Path, name: str, cad: Path, slots: np.ndarray, colors: list[str]) -> Path:

@@ -64,11 +64,11 @@ def _has_design():
         return False
 
 
-@pytest.mark.parametrize("kind", ["sneaker", "shiba", "box"])
+@pytest.mark.parametrize("kind", ["sneaker", "shiba", "box", "kabuto"])
 def test_models_fit_the_legs_and_colors(kind):
     from tidepool.shell_models import MODELS
 
-    parts, colors = MODELS[kind]()
+    parts, colors, *_ = MODELS[kind]()
     assert 1 <= len(colors) <= 3 and all(shell.HEX.match(c) for c in colors)
     for mesh, slot in parts:
         assert mesh.is_watertight
