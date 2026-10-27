@@ -50,11 +50,17 @@ def sneaker():
     sole = join(box((0, -5, BASE + 8), (70, 120, 16)),
                 cyl((0, -65, BASE + 8), 35, 16), cyl((0, 55, BASE + 8), 35, 16))
     upper = cut(blob((0, -5, BASE + 18), (36, 68, 40)), cyl((0, 32, BASE + 58), 24, 40))
+    upper = cut(upper, box((0, -5, BASE - 30), (100, 200, 60)))       # nothing below the sole's top
+    toe_cut = box((0, -5, BASE - 30), (100, 200, 60))
     upper = join(upper, box((0, 64, BASE + 44), (18, 8, 24)))
-    toe = blob((0, -56, BASE + 18), (32, 26, 22))
+    toe = cut(blob((0, -56, BASE + 18), (32, 26, 22)), toe_cut)
     laces = [box((0, y, BASE + 18 + 40 * np.sqrt(max(0.0, 1 - ((y + 5) / 68) ** 2)) - 1), (36, 5, 5))
              for y in (-34, -22, -10, 2)]
     parts = [(sole, 2), (upper, 1), (toe, 2)] + [(l, 2) for l in laces]
+    # the shell's top falls away toward the back; lean the shoe with it
+    tilt = trimesh.transformations.rotation_matrix(np.radians(-9.5), (1, 0, 0), point=(0, -5, BASE))
+    for m, _ in parts:
+        m.apply_transform(tilt)
     return parts, ["#2D4A8A", "#F4F2EE"]
 
 
@@ -138,3 +144,4 @@ def kabuto():
 
 
 MODELS = {"sneaker": sneaker, "shiba": shiba, "box": crate, "kabuto": kabuto}
+SITTING = {"sneaker", "shiba", "box"}      # things put on the shell, lowered until they touch it

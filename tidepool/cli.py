@@ -152,7 +152,7 @@ def cmd_shellify(args) -> int:
                 print(f"no such photo: {photo} (or use a model: {', '.join(MODELS)})", file=sys.stderr)
                 return 1
             name = args.name or re.sub(r"[^A-Za-z0-9_.-]+", "-", photo.stem).strip("-").lower() or "shell"
-            skin = shell.make(photo, name, colors=colors, length=args.length)
+            skin = shell.make(photo, name, colors=colors, length=args.length, upright=args.upright)
     except (shell.ShellError, paths.MissingRepo) as e:
         raise SystemExit(f"error: {e}") from None
     png = skin.with_suffix(".png")
@@ -245,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     sf.add_argument("--colors", metavar="BODY[,ACCENT]",
                     help="override the colors picked from the photo, e.g. '#E8A9A0,#F5F2EC'")
     sf.add_argument("--length", type=float, default=150.0, help="front-to-back size in mm (default 150)")
+    sf.add_argument("--upright", action="store_true", help="stand a cup mouth-up instead of lying it down")
     sf.set_defaults(fn=cmd_shellify)
 
     cl = sub.add_parser("closet", help="try every shell on the crab in the browser")

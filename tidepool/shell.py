@@ -94,7 +94,7 @@ def reconstruct(photo: Path, work: Path, res: int = 256):
     return trimesh.load(work / "mesh.ply", process=True), pixels
 
 
-def lay_down(m, length: float = 150.0, smooth: int = 80):
+def lay_down(m, length: float = 150.0, smooth: int = 250):
     """Orient a cup-like mesh: opening to the front (-y), handle up, sitting on the shell. In place."""
     import trimesh
 
@@ -171,6 +171,43 @@ def lay_down(m, length: float = 150.0, smooth: int = 80):
     return m
 
 
+def _turned(profile, cup):
+    """Revolve (radius, distance from the mouth) pairs into a solid on the cup's axis."""
+    import trimesh
+
+    solid = trimesh.creation.revolve(profile, sections=96)
+    solid.apply_transform(trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0]))   # its z -> our y
+    solid.apply_translation([cup["x"], cup["front"], cup["z"]])
+    return solid
+
+
+def plain(m, slices: int = 24):
+    """Replace the body with a smooth turned one, so a print's relief doesn't come along; keep the handle."""
+    import trimesh
+
+    cup = m.metadata["cup"]
+    pts, _ = trimesh.sample.sample_surface_even(m, 40000, seed=0)
+    h = pts[:, 1] - cup["front"]
+    side = np.abs(pts[:, 2] - cup["z"]) < cup["r_back"] * 0.5          # the flanks: no handle there
+    edges = np.linspace(0, cup["length"], slices + 1)
+    radius = []
+    for a, b in zip(edges[:-1], edges[1:]):
+        band = side & (h >= a) & (h < b)
+        radius.append(np.percentile(np.abs(pts[band, 0] - cup["x"]), 95) if band.sum() > 20 else np.nan)
+    radius = np.array(radius)
+    radius = np.interp(np.arange(slices), np.flatnonzero(~np.isnan(radius)), radius[~np.isnan(radius)])
+    radius = np.convolve(np.pad(radius, 2, mode="edge"), np.ones(5) / 5, mode="valid")
+    mids = (edges[:-1] + edges[1:]) / 2
+    body = _turned([[0, 0], *zip(radius, mids), [0, cup["length"]]], cup)
+    grown = _turned([[0, -5], *zip(radius + 2.5, mids), [0, cup["length"] + 5]], cup)
+    rest = trimesh.boolean.difference([m, grown], engine="manifold").split(only_watertight=False)
+    above = [r for r in rest if r.bounds.mean(0)[2] > cup["z"] + cup["r_back"] * 0.5]
+    parts = [body] + ([max(above, key=lambda r: r.area)] if above else [])
+    out = trimesh.boolean.union(parts, engine="manifold") if len(parts) > 1 else body
+    out.metadata["cup"] = dict(cup, r_mouth=float(radius[0]), r_back=float(radius[-3]))
+    return out
+
+
 def hollow(m, wall: float = 5.0, floor: float = 0.15):
     """Bore the mouth out, since TripoSR fills most of a cup in."""
     import trimesh
@@ -179,28 +216,60 @@ def hollow(m, wall: float = 5.0, floor: float = 0.15):
     depth = cup["length"] * (1 - floor)
     r0, r1 = cup["r_mouth"] - wall, cup["r_back"] - wall
     # a frustum along +y from just outside the mouth, wide end at the mouth
-    bore = trimesh.creation.revolve([[0, -10], [r0, -10], [r0, 0], [r1, depth], [0, depth]], sections=64)
-    bore.apply_transform(trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0]))
-    bore.apply_translation([cup["x"], cup["front"], cup["z"]])
+    bore = _turned([[0, -10], [r0, -10], [r0, 0], [r1, depth], [0, depth]], cup)
     out = trimesh.boolean.difference([m, bore], engine="manifold")
     out.metadata["cup"] = dict(cup, depth=depth, wall=wall)
+    out.metadata["bore"] = bore
     return out
 
 
-def paint_cup(shell, stock, cup) -> np.ndarray:
-    """Slot per face: 0 stock, 1 outside, 2 inside and rim."""
+def settle(meshes, stock, tol: float = 3.0, sink: float = 1.5) -> float:
+    """Lower things straight down until the most-floating part of their underside meets the shell."""
+    v = np.vstack([m.vertices for m in meshes])
+    low = v[v[:, 2] < v[:, 2].min() + tol]
+    hit, idx, _ = stock.ray.intersects_location(low + [0, 0, 300], np.tile([0, 0, -1.0], (len(low), 1)),
+                                                multiple_hits=False)
+    if not len(hit):
+        return 0.0
+    dz = -float((low[idx, 2] - hit[:, 2]).max()) - sink
+    for m in meshes:
+        m.apply_translation([0, 0, dz])
+    return dz
+
+
+def place_cup(m, stock, upright: bool = False) -> np.ndarray:
+    """Seat a lying cup on the shell, or stand it mouth-up with the handle to the back.
+
+    Returns the transform from the lying frame, so the paint can still be worked out there.
+    """
+    import trimesh
+
+    cup = m.metadata["cup"]
+    P = np.eye(4)
+    if upright:
+        P = trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0])   # (x, y, z) -> (x, z, -y)
+        P[:3, 3] = [-cup["x"], -5 - cup["z"], 0]
+        m.apply_transform(P)
+    dz = settle([m], stock, tol=3.0, sink=1.5 if upright else 6.0)
+    return trimesh.transformations.translation_matrix([0, 0, dz]) @ P
+
+
+def paint_cup(shell, stock, cup, bore, pose=None) -> np.ndarray:
+    """Slot per face: 0 stock, 1 outside, 2 inside (what the bore cut) and the rim."""
     import trimesh
     from scipy.spatial import cKDTree
 
     pts, _ = trimesh.sample.sample_surface_even(stock, 400000, seed=0)
     c = shell.triangles_center
     d, _ = cKDTree(pts).query(c)
-    rr = np.hypot(c[:, 0] - cup["x"], c[:, 2] - cup["z"])
-    t = np.clip((c[:, 1] - cup["front"]) / cup["depth"], 0, 1)
-    inner = cup["r_mouth"] + (cup["r_back"] - cup["r_mouth"]) * t - cup["wall"]
-    inside = (rr < inner + 1.5) & (c[:, 1] < cup["front"] + cup["depth"] + 1.5)
-    rim = (c[:, 1] < cup["front"] + 3) & (rr < cup["r_mouth"] + 1)
-    return np.where(d < 0.8, 0, np.where(inside | rim, 2, 1))
+    n = shell.face_normals
+    if pose is not None:
+        inv = np.linalg.inv(pose)
+        c = trimesh.transform_points(c, inv)
+        n = n @ inv[:3, :3].T
+    cut, _ = cKDTree(trimesh.sample.sample_surface_even(bore, 200000, seed=0)[0]).query(c)
+    rim = (n[:, 1] < -0.3) & (c[:, 1] < cup["front"] + 4)
+    return np.where(d < 0.8, 0, np.where((cut < 1.2) | rim, 2, 1))
 
 
 def palette(pixels: np.ndarray) -> list[str]:
@@ -277,7 +346,7 @@ def _fresh(name: str, out: Path | None, colors: list[str] | None) -> Path:
 
 
 def make(photo: Path, name: str, *, colors: list[str] | None = None, length: float = 150.0,
-         out: Path | None = None) -> Path:
+         upright: bool = False, out: Path | None = None) -> Path:
     import trimesh
 
     out = _fresh(name, out, colors)
@@ -286,16 +355,17 @@ def make(photo: Path, name: str, *, colors: list[str] | None = None, length: flo
     cup = thing.metadata["cup"]
     thing = thing.simplify_quadric_decimation(face_count=30000)
     thing.metadata["cup"] = cup
-    thing = hollow(thing)
+    thing = hollow(plain(thing))
     stock = stock_shell()
-    fused = trimesh.boolean.union([stock, trimesh.Trimesh(thing.vertices, thing.faces)], engine="manifold")
+    pose = place_cup(thing, stock, upright)
+    fused = trimesh.boolean.union([stock, thing], engine="manifold")
     cad = out / f"{name}-shell-mm.stl"
     fused.export(cad)
     fused = trimesh.load_mesh(cad, process=True)      # what assemble will see, face for face
     picked = palette(pixels)
     for i, c in enumerate(colors or []):
         picked[i] = c
-    return package(out, name, cad, paint_cup(fused, stock, thing.metadata["cup"]), [STOCK_RED] + picked[:2])
+    return package(out, name, cad, paint_cup(fused, stock, thing.metadata["cup"], thing.metadata["bore"], pose), [STOCK_RED] + picked[:2])
 
 
 def make_model(kind: str, name: str | None = None, *, colors: list[str] | None = None,
@@ -304,7 +374,7 @@ def make_model(kind: str, name: str | None = None, *, colors: list[str] | None =
     import trimesh
     from scipy.spatial import cKDTree
 
-    from .shell_models import MODELS
+    from .shell_models import MODELS, SITTING
 
     if kind not in MODELS:
         raise ShellError(f"no model {kind!r}; have {', '.join(MODELS)}")
@@ -314,6 +384,8 @@ def make_model(kind: str, name: str | None = None, *, colors: list[str] | None =
     for i, c in enumerate(colors or []):
         picked[i] = c
     stock = stock_shell()
+    if kind in SITTING:
+        settle([m for m, _ in parts], stock)
     fused = trimesh.boolean.union([stock] + [m for m, _ in parts], engine="manifold")
     cad = out / f"{name}-shell-mm.stl"
     fused.export(cad)
