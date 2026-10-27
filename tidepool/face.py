@@ -13,14 +13,14 @@ import numpy as np
 FPS = 24
 FACES = {"normal": 1200, "wide": 192, "happy": 528, "surprised": 792, "sparkle": 1104, "blink": 0}
 SIZE = 132
-CROP = 30          # the shapes sit in the middle of the frame; zoom in on them
+CROP = 40          # the shapes sit in the middle of the frame; zoom in on them
 
 # display window in base_link: front face leans back about 33 degrees
 CENTER = np.array([0.0836, 0.0, 0.048])
 NORMAL = np.array([0.836, 0.0, 0.549])
 UP = np.array([-0.549, 0.0, 0.836])
 EYE_Y = 0.026
-HALF = 0.018
+HALF = 0.013
 
 
 def source(jumper: Path) -> Path:
