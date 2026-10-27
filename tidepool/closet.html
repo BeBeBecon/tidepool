@@ -24,7 +24,7 @@
   }
   canvas { display: block; }
   .ui { transition: opacity .25s; }
-  body.clean .ui { opacity: 0; pointer-events: none; }
+  body.clean .ui { opacity: 0 !important; pointer-events: none; }
 
   header { position: fixed; top: 16px; left: 20px; line-height: 1; }
   header h1 { margin: 0; font-size: 34px; font-weight: 700; letter-spacing: -0.5px; }
@@ -95,6 +95,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 
 const manifest = await (await fetch("closet.json")).json();
 
@@ -102,7 +103,9 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserv
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.NoToneMapping;   // keep the shell colors as painted
+// lighting and tone follow jumper-design's be-web/1, the look of the official site
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.95;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.prepend(renderer.domElement);
@@ -115,13 +118,14 @@ controls.target.set(0, 0.13, 0);
 controls.minDistance = 0.3;
 controls.maxDistance = 2.5;
 
-scene.add(new THREE.HemisphereLight(0xf4f1e6, 0x9c8a66, 1.1));
-const sun = new THREE.DirectionalLight(0xfff3dc, 1.5);
-sun.position.set(0.8, 1.6, 0.6);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x90988b, 1.7));
+const sun = new THREE.DirectionalLight(0xfff8ed, 2.4);
+sun.position.set(1.5, 4, 2);        // (1.5, -2, 4) in MuJoCo's z-up frame
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -0.6, right: 0.6, top: 0.6, bottom: -0.6, near: 0.1, far: 4 });
-sun.shadow.bias = -0.0004;
+Object.assign(sun.shadow.camera, { left: -0.6, right: 0.6, top: 0.6, bottom: -0.6, near: 0.5, far: 10 });
+sun.shadow.bias = -0.0003;
+sun.shadow.normalBias = 0.002;
 scene.add(sun);
 
 const floor = new THREE.Mesh(new THREE.CircleGeometry(0.9, 64), new THREE.MeshStandardMaterial({ color: 0xe6d3aa, roughness: 1 }));
@@ -136,7 +140,12 @@ scene.add(crab);
 
 const loader = new GLTFLoader();
 const load = (url) => new Promise((ok, no) => loader.load(url, (g) => {
-  g.scene.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  g.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    o.geometry = toCreasedNormals(o.geometry, THREE.MathUtils.degToRad(35));
+    o.castShadow = true;
+    o.receiveShadow = true;
+  });
   ok(g.scene);
 }, undefined, no));
 

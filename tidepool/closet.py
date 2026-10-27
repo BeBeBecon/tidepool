@@ -52,6 +52,11 @@ def _thin(mesh, keep: float):
     return mesh.simplify_quadric_decimation(face_count=max(200, int(len(mesh.faces) * keep)))
 
 
+def _linear(c: float) -> float:
+    # MJCF colors are sRGB (jumper-design's be-web/1); glTF wants linear
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
 def _glb(groups: dict[tuple, list], path: Path, keep: float) -> int:
     """One mesh per color, so the page draws a handful of objects instead of forty."""
     import trimesh
@@ -62,12 +67,11 @@ def _glb(groups: dict[tuple, list], path: Path, keep: float) -> int:
     for rgba, meshes in groups.items():
         mesh = _thin(trimesh.util.concatenate(meshes), keep)
         mesh.merge_vertices()
-        mesh.fix_normals()
         mesh.visual = trimesh.visual.TextureVisuals(material=PBRMaterial(
-            baseColorFactor=[int(c * 255) for c in rgba], metallicFactor=0.0, roughnessFactor=0.55))
+            baseColorFactor=[_linear(c) for c in rgba[:3]] + [rgba[3]], metallicFactor=0.0, roughnessFactor=0.9))
         scene.add_geometry(mesh)
         faces += len(mesh.faces)
-    scene.export(path, include_normals=True)
+    scene.export(path)          # normals are creased on the page, so edges stay sharp
     return faces
 
 
@@ -78,7 +82,7 @@ def _is_visual(m, g) -> bool:
             and m.geom_conaffinity[g] == 0 and m.geom_group[g] in (0, 2))
 
 
-def export(skins: list[Path], out: Path, keep: float = 0.1) -> dict:
+def export(skins: list[Path], out: Path, keep: float = 0.25) -> dict:
     import mujoco
     import trimesh
 
