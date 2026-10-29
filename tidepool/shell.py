@@ -405,9 +405,7 @@ def package(out: Path, name: str, cad: Path, slots: np.ndarray, colors: list[str
     import trimesh
 
     sys.path.insert(0, str(paths.jumper_design() / "src"))
-    from shellflow.packages import verify_package
     from shellflow.simulation import assemble
-    from shellflow.skin_package import export_skin
 
     fused = trimesh.load_mesh(cad, process=True)
     write_ams(out / "ams.3mf", fused, slots, colors)
@@ -416,13 +414,28 @@ def package(out: Path, name: str, cad: Path, slots: np.ndarray, colors: list[str
     report = json.loads((model / "simulation-report.json").read_text(encoding="utf-8"))
     if report["colors"]["mode"] == "monochrome":
         print(f"[shell] colors were not applied: {report['colors'].get('reason')}", file=sys.stderr)
+    print(f"[shell] colors {' '.join(colors)}")
+    return export(out, name, cad)
+
+
+def export(out: Path, name: str, cad: Path) -> Path:
+    """Assembly -> .skin with an embedded thumbnail, which the site wants for its listing."""
+    sys.path.insert(0, str(paths.jumper_design() / "src"))
+    from PIL import Image
+    from shellflow.packages import verify_package
+    from shellflow.skin_package import export_skin
+
+    model = out / "assembly"
+    thumb = out / "thumb.png"
+    preview(out / f"{name}.skin", thumb)
+    Image.open(thumb).convert("RGB").resize((800, 600), Image.LANCZOS).save(thumb)
     skin = out / f"{name}.skin"
+    skin.unlink(missing_ok=True)
     title = name.replace("-", " ").replace("_", " ").title()
-    export_skin(model, paths.profile(), cad, skin, package_id=name, title=title)
+    export_skin(model, paths.profile(), cad, skin, package_id=name, title=title, preview=thumb)
     result = verify_package(skin, platform_profile=paths.profile(), mujoco=True)
     if not result.get("ok"):
         raise ShellError(f"verify-package: {json.dumps(result)}")
-    print(f"[shell] colors {' '.join(colors)}")
     return skin
 
 
@@ -431,5 +444,5 @@ def preview(skin: Path, png: Path, view: str = "three-quarter") -> None:
 
     design = paths.jumper_design()
     subprocess.run([paths.python(), str(design / "scripts/preview_simulation.py"),
-                    str(skin.parent / "assembly"), "--render", str(png), "--view", view],
+                    str(skin.parent.resolve() / "assembly"), "--render", str(png.resolve()), "--view", view],
                    cwd=design, capture_output=True, timeout=300, check=False)
