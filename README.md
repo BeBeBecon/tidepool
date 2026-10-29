@@ -51,7 +51,47 @@ In the viewer the crab runs the stock app from jumper: `W`/`S` walk, `A`/`D` sid
 `J`/`L` turn, Space jumps, `1`-`4` are gestures, Ctrl+`1`-`4` dances, `V`/`B` the claws.
 Walk into the first domino.
 
+## Shells
+
+The crab is a hermit crab now. `shellify` turns a photo of a mug (or anything
+cup-shaped) into a `.skin` with the thing fused onto the stock shell:
+
+```
+tidepool shellify mug.jpg --upright --colors "#F4C6CF,#FFFFFF"
+tidepool shellify kabuto       # or sneaker, shiba, box: built-in models, no photo needed
+```
+
+Photos go through [TripoSR](https://github.com/VAST-AI-Research/TripoSR) on the CPU
+(a minute or so on an M4). The cup is turned smooth, bored out and painted outside,
+inside and rim, so it reads as a cup rather than a scanned lump. Only the upper shell
+changes; collision and inertia stay stock, and every package goes through
+jumper-design's `verify-package` before it is written. Out comes
+`out/<name>/<name>.skin`, ready for the Appearance upload.
+
+The photo path needs the extras and a TripoSR clone next to this repo
+(`TIDEPOOL_TRIPOSR` if not):
+
+```
+git clone https://github.com/VAST-AI-Research/TripoSR ../TripoSR
+pip install -e ".[shell]"
+```
+
+Put `skin: out/kabuto/kabuto.skin` in a scene YAML and `play` / `shoot` dress the crab
+in it. The eyes light up with the stock face animation from jumper.
+
+## Closet
+
+```
+tidepool closet                # every .skin under out/, on one crab, in the browser
+```
+
+Click a tag to swap shells, `1`-`9` or the arrows do the same, `C` cycles the camera,
+`F` the face, `H` hides the UI for recording. `?shell=kabuto&cam=front&clean=1` in the
+URL opens straight to a shot. It is three.js with jumper-design's web lighting, not a
+simulation; `shoot` is for the crab moving.
+
 ## License
 
 Apache-2.0. Jumper and jumper-design are copyright KingKong Robotics, Apache-2.0; this
-project uses them as installed packages and ships nothing of theirs.
+project uses them as installed packages and ships nothing of theirs. See `NOTICE` for
+TripoSR and the face animation.

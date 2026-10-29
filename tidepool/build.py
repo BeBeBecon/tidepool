@@ -8,7 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import paths, scene
+from . import paths, room, scene
 from .spec import Spec
 
 
@@ -43,7 +43,9 @@ def _shellflow(*args: str) -> dict:
 def build(spec: Spec, out: Path | None = None, *, verify: bool = True, preview: Path | None = None) -> Built:
     out = out or paths.out_dir() / spec.name
     out.mkdir(parents=True, exist_ok=True)
-    doc = scene.build(spec)
+    doc, terrain = scene.build(spec, cache_dir=out, with_terrain=True)
+    if terrain is not None:
+        room.write_assets(spec.photo, terrain, out)
     spec_json = out / f"{spec.name}.scene.json"
     spec_json.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
 
@@ -54,6 +56,8 @@ def build(spec: Spec, out: Path | None = None, *, verify: bool = True, preview: 
             "--profile", str(paths.profile())]
     if preview is not None:
         args += ["--preview", str(preview)]
+    if spec.skin is not None:
+        args += ["--default-skin", str(spec.skin)]
     report = _shellflow(*args)
     if verify:
         report["verify"] = _shellflow("verify-package", str(target),

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import math
+from pathlib import Path
 from typing import Any
 
-from . import toys
+from . import room, toys
 from .spec import Spec, SpecError
 
 LOOKS: dict[str, dict[str, Any]] = {
@@ -31,7 +33,12 @@ LOOKS: dict[str, dict[str, Any]] = {
 }
 
 
-def build(spec: Spec) -> dict[str, Any]:
+def build(spec: Spec, cache_dir: Path | None = None, with_terrain: bool = False):
+    """The mjscene document. With a photo, `cache_dir` is where its depth map is kept.
+
+    `with_terrain` also returns the `room.Terrain` (or None) so the caller can write
+    its mesh files next to the JSON.
+    """
     if spec.look not in LOOKS:
         raise SpecError(f"look {spec.look!r}: choose from {', '.join(LOOKS)}")
     objects: list[dict[str, Any]] = []
@@ -41,6 +48,18 @@ def build(spec: Spec) -> dict[str, Any]:
         except (KeyError, TypeError, ValueError) as e:
             raise SpecError(f"toys[{i}]: {e}") from None
 
+    terrain = None
+    spawn_at = spec.spawn_at
+    yaw = spec.spawn_yaw
+    if spec.photo is not None:
+        terrain = room.terrain(spec.photo, cache_dir or spec.photo.file.parent / ".tidepool")
+        if spawn_at is None:
+            spawn_at = terrain.spawn
+            if terrain.face is not None:   # an auto spawn looks at the first movable
+                yaw = math.degrees(math.atan2(terrain.face[1] - spawn_at[1], terrain.face[0] - spawn_at[0]))
+    if spawn_at is None:
+        spawn_at = (0.0, 0.0)
+
     doc: dict[str, Any] = {
         "name": spec.name,
         "title": spec.name.replace("-", " ").replace("_", " ").title(),
@@ -49,13 +68,15 @@ def build(spec: Spec) -> dict[str, Any]:
         **LOOKS[spec.look],
         "defaults": {"friction": "wood", "contact": "default"},
         "spawn": {
-            "position": [spec.spawn_at[0], spec.spawn_at[1], 0.0],
-            "yaw": spec.spawn_yaw,
-            "clearance": 0.4,
+            "position": [spawn_at[0], spawn_at[1], 0.0],
+            "yaw": round(yaw, 2),
+            "clearance": 0.3 if terrain else 0.4,
         },
         "objects": objects,
     }
-    return doc
+    if terrain is not None:
+        room.apply(doc, spec.photo, terrain)
+    return (doc, terrain) if with_terrain else doc
 
 
 def stats(doc: dict[str, Any]) -> dict[str, int]:

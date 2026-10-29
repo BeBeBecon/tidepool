@@ -11,9 +11,14 @@ license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 dependencies = [
     "pyyaml>=6",
+    "numpy",
+    "pillow",
 ]
 
 [project.optional-dependencies]
+room = ["torch", "transformers>=4.45"]
+shell = ["torch", "transformers>=4.45", "trimesh", "manifold3d", "fast-simplification", "scipy",
+         "scikit-image", "rembg", "omegaconf", "einops"]
 dev = ["pytest>=8"]
 
 [project.scripts]
@@ -21,6 +26,9 @@ tidepool = "tidepool.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["tidepool*"]
+
+[tool.setuptools.package-data]
+tidepool = ["*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -43,3 +43,10 @@ checkpoints/
 
 # Screen recordings and renders for posts
 media/
+
+# Personal photos used as terrain input
+photos/
+*.jpg
+*.jpeg
+*.heic
+*.HEIC
