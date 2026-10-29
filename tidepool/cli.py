@@ -240,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     sh.set_defaults(fn=cmd_shoot)
 
     sf = sub.add_parser("shellify", help="turn a photo of a cup-like thing into a shell the crab wears")
-    sf.add_argument("photo", help="a photo, or a built-in model: sneaker, shiba, box")
+    sf.add_argument("photo", help="a photo, or a built-in model: sneaker, shiba, box, kabuto")
     sf.add_argument("--name")
     sf.add_argument("--colors", metavar="BODY[,ACCENT]",
                     help="override the colors picked from the photo, e.g. '#E8A9A0,#F5F2EC'")
