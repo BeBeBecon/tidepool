@@ -1,0 +1,435 @@
+"""Photo of a thing -> a Jumper shell (.skin) wearing it, hermit crab style.
+
+TripoSR makes the mesh, the mesh is laid on its side with its opening to the
+front and fused onto the stock shell, and jumper-design's shellflow builds and
+verifies the package. Colors go in through a Bambu-style ams.3mf, the same way
+a 4-color print would.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import sys
+import zipfile
+from pathlib import Path
+
+import numpy as np
+
+from . import paths
+
+STOCK_RED = "#D9140D"
+HEX = re.compile(r"#[0-9A-Fa-f]{6}\Z")
+CODES = ["4", "8", "0C", "1C"]       # Bambu paint codes for filament slots 1-4
+SHELL_TOP = 78.7                     # mm, top of the stock shell in CAD frame
+HALF_WIDTH = 88.0                    # mm, past this the legs swing through it
+
+
+class ShellError(RuntimeError):
+    pass
+
+
+def triposr() -> Path:
+    return paths._find("TIDEPOOL_TRIPOSR", "TripoSR", "tsr/system.py")
+
+
+def reconstruct(photo: Path, work: Path, res: int = 256):
+    """Photo -> (trimesh with vertex colors, RGB pixels of the cut-out thing)."""
+    import types
+
+    import rembg
+    import torch
+    import trimesh
+    from PIL import Image
+    from skimage.measure import marching_cubes
+
+    def mcubes(level, iso):
+        v, f, _, _ = marching_cubes(level.cpu().numpy(), iso)
+        return torch.from_numpy(v[:, [2, 1, 0]].copy()).float(), torch.from_numpy(f[:, [0, 2, 1]].copy()).long()
+
+    sys.modules.setdefault("torchmcubes", types.SimpleNamespace(marching_cubes=mcubes))
+    sys.path.insert(0, str(triposr()))
+    from tsr.system import TSR
+    from tsr.utils import remove_background, resize_foreground
+
+    # transformers 5 renamed the ViT layers the checkpoint was saved with
+    rename = [(r"\.attention\.attention\.query", ".attention.q_proj"),
+              (r"\.attention\.attention\.key", ".attention.k_proj"),
+              (r"\.attention\.attention\.value", ".attention.v_proj"),
+              (r"\.attention\.output\.dense", ".attention.o_proj"),
+              (r"\.intermediate\.dense", ".mlp.fc1"),
+              (r"\.output\.dense", ".mlp.fc2")]
+    load = TSR.load_state_dict
+
+    def remap(self, sd, *a, **kw):
+        out = {}
+        for k, v in sd.items():
+            if ".encoder.layer." in k:
+                k = k.replace(".encoder.layer.", ".layers.")
+                for pat, rep in rename:
+                    k = re.sub(pat, rep, k)
+            out[k] = v
+        return load(self, out, *a, **kw)
+
+    TSR.load_state_dict = remap
+    model = TSR.from_pretrained("stabilityai/TripoSR", config_name="config.yaml", weight_name="model.ckpt")
+    model.renderer.set_chunk_size(8192)
+
+    img = Image.open(photo)
+    img.thumbnail((1024, 1024))
+    cut = remove_background(img, rembg.new_session("u2net"))    # bria's default is non-commercial
+    a = np.asarray(cut).astype(np.float32) / 255.0
+    pixels = (a[..., :3][a[..., 3] > 0.95] * 255).astype(np.float32)
+    cut = resize_foreground(cut, 0.85)
+    a = np.asarray(cut).astype(np.float32) / 255.0
+    a = a[..., :3] * a[..., 3:4] + (1 - a[..., 3:4]) * 0.5
+    framed = Image.fromarray((a * 255).astype(np.uint8))
+    framed.save(work / "input.png")
+
+    with torch.no_grad():
+        codes = model([framed], device="cpu")
+    mesh = model.extract_mesh(codes, True, resolution=res)[0]
+    mesh.export(work / "mesh.ply")
+    return trimesh.load(work / "mesh.ply", process=True), pixels
+
+
+def lay_down(m, length: float = 150.0, smooth: int = 250):
+    """Orient a cup-like mesh: opening to the front (-y), handle up, sitting on the shell. In place."""
+    import trimesh
+
+    m = max(m.split(only_watertight=False), key=lambda p: p.area)
+    m.fill_holes()
+    m.fix_normals()
+
+    # the two biggest flat faces of the hull are the rim and the base
+    hull = m.convex_hull
+    areas = [hull.area_faces[f].sum() for f in hull.facets]
+    axis = hull.facets_normal[int(np.argmax(areas))]
+    c = m.bounds.mean(0)
+    ext = np.ptp(m.vertices @ axis)
+
+    # the bounding box leans toward the handle, so find the body's own centre with a circle fit
+    u = np.cross(axis, [1, 0, 0] if abs(axis[0]) < 0.9 else [0, 1, 0])
+    u /= np.linalg.norm(u)
+    v = np.cross(axis, u)
+    s, _ = trimesh.sample.sample_surface_even(m, 6000, seed=0)       # by area, not vertex density
+    p = np.c_[(s - c) @ u, (s - c) @ v]
+    keep = np.ones(len(p), bool)
+    for _ in range(3):
+        A = np.c_[2 * p[keep], np.ones(keep.sum())]
+        (x0, y0, k), *_ = np.linalg.lstsq(A, (p[keep] ** 2).sum(1), rcond=None)
+        radius = np.sqrt(k + x0 ** 2 + y0 ** 2)
+        r = np.hypot(p[:, 0] - x0, p[:, 1] - y0)
+        keep = r < radius * 1.1
+    c = c + x0 * u + y0 * v
+    i = np.argmax(r)                                                # the handle, or whatever sticks out most
+    up = (p[i, 0] - x0) * u + (p[i, 1] - y0) * v
+    up /= np.linalg.norm(up)
+
+    def depth(sign):
+        # rays fired inward from the open end travel further, into the mouth
+        rng = np.random.default_rng(0)
+        rr, t = rng.uniform(0, radius * 0.5, 64), rng.uniform(0, 2 * np.pi, 64)
+        start = c + sign * axis * ext
+        pts = start + rr[:, None] * (np.cos(t)[:, None] * u + np.sin(t)[:, None] * v)
+        hit, _, _ = m.ray.intersects_location(pts, np.tile(-sign * axis, (64, 1)), multiple_hits=False)
+        return np.mean((start - hit) @ (sign * axis)) if len(hit) else 0.0
+
+    mouth = axis if depth(1) > depth(-1) else -axis
+
+    src = np.stack([np.cross(up, mouth), mouth, up])
+    rot = np.diag([1.0, -1.0, 1.0]) @ src
+    T = np.eye(4)
+    T[:3, :3], T[:3, 3] = rot, -rot @ c
+    m.apply_transform(T)
+    if np.linalg.det(rot) < 0:
+        m.invert()
+    m.apply_scale(length / np.ptp(m.vertices[:, 1]))
+    half = np.abs(m.bounds[:, 0]).max()
+    if half > HALF_WIDTH:
+        m.apply_scale(HALF_WIDTH / half)
+    lo, hi = m.bounds
+    shift = np.array([0, -5 - (lo[1] + hi[1]) / 2, SHELL_TOP - lo[2] - 12])
+    m.apply_translation(shift)
+    if smooth:
+        trimesh.smoothing.filter_taubin(m, iterations=smooth)
+    # measure the body where it is, from slices: the handle is up, so a slice's
+    # x extent is the body alone and its lowest point is the body's underside
+    v, _ = trimesh.sample.sample_surface_even(m, 20000, seed=0)
+    lo, hi = m.bounds
+    L = hi[1] - lo[1]
+
+    def ring(frac):
+        band = v[np.abs(v[:, 1] - (lo[1] + frac * L)) < L / 14]
+        r = np.ptp(band[:, 0]) / 2
+        return (band[:, 0].max() + band[:, 0].min()) / 2, band[:, 2].min() + r, r
+
+    x0, z0, _ = ring(0.5)
+    m.metadata["cup"] = {"x": float(x0), "z": float(z0), "front": float(lo[1]), "length": float(L),
+                         "r_mouth": float(ring(0.1)[2]), "r_back": float(ring(0.85)[2])}
+    return m
+
+
+def _turned(profile, cup):
+    """Revolve (radius, distance from the mouth) pairs into a solid on the cup's axis."""
+    import trimesh
+
+    solid = trimesh.creation.revolve(profile, sections=96)
+    solid.apply_transform(trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0]))   # its z -> our y
+    solid.apply_translation([cup["x"], cup["front"], cup["z"]])
+    return solid
+
+
+def plain(m, slices: int = 24):
+    """Replace the body with a smooth turned one, so a print's relief doesn't come along; keep the handle."""
+    import trimesh
+
+    cup = m.metadata["cup"]
+    pts, _ = trimesh.sample.sample_surface_even(m, 40000, seed=0)
+    h = pts[:, 1] - cup["front"]
+    side = np.abs(pts[:, 2] - cup["z"]) < cup["r_back"] * 0.5          # the flanks: no handle there
+    edges = np.linspace(0, cup["length"], slices + 1)
+    radius = []
+    for a, b in zip(edges[:-1], edges[1:]):
+        band = side & (h >= a) & (h < b)
+        radius.append(np.percentile(np.abs(pts[band, 0] - cup["x"]), 95) if band.sum() > 20 else np.nan)
+    radius = np.array(radius)
+    radius = np.interp(np.arange(slices), np.flatnonzero(~np.isnan(radius)), radius[~np.isnan(radius)])
+    radius = np.convolve(np.pad(radius, 2, mode="edge"), np.ones(5) / 5, mode="valid")
+    mids = (edges[:-1] + edges[1:]) / 2
+    body = _turned([[0, 0], *zip(radius, mids), [0, cup["length"]]], cup)
+    grown = _turned([[0, -5], *zip(radius + 2.5, mids), [0, cup["length"] + 5]], cup)
+    rest = trimesh.boolean.difference([m, grown], engine="manifold").split(only_watertight=False)
+    above = [r for r in rest if r.bounds.mean(0)[2] > cup["z"] + cup["r_back"] * 0.5]
+    parts = [body] + ([max(above, key=lambda r: r.area)] if above else [])
+    out = trimesh.boolean.union(parts, engine="manifold") if len(parts) > 1 else body
+    out.metadata["cup"] = dict(cup, r_mouth=float(radius[0]), r_back=float(radius[-3]))
+    return out
+
+
+def hollow(m, wall: float = 5.0, floor: float = 0.15):
+    """Bore the mouth out, since TripoSR fills most of a cup in."""
+    import trimesh
+
+    cup = m.metadata["cup"]
+    depth = cup["length"] * (1 - floor)
+    r0, r1 = cup["r_mouth"] - wall, cup["r_back"] - wall
+    # a frustum along +y from just outside the mouth, wide end at the mouth
+    bore = _turned([[0, -10], [r0, -10], [r0, 0], [r1, depth], [0, depth]], cup)
+    out = trimesh.boolean.difference([m, bore], engine="manifold")
+    out.metadata["cup"] = dict(cup, depth=depth, wall=wall)
+    out.metadata["bore"] = bore
+    return out
+
+
+def settle(meshes, stock, tol: float = 3.0, sink: float = 1.5) -> float:
+    """Lower things straight down until the most-floating part of their underside meets the shell."""
+    v = np.vstack([m.vertices for m in meshes])
+    low = v[v[:, 2] < v[:, 2].min() + tol]
+    hit, idx, _ = stock.ray.intersects_location(low + [0, 0, 300], np.tile([0, 0, -1.0], (len(low), 1)),
+                                                multiple_hits=False)
+    if not len(hit):
+        return 0.0
+    dz = -float((low[idx, 2] - hit[:, 2]).max()) - sink
+    for m in meshes:
+        m.apply_translation([0, 0, dz])
+    return dz
+
+
+def place_cup(m, stock, upright: bool = False) -> np.ndarray:
+    """Seat a lying cup on the shell, or stand it mouth-up with the handle to the back.
+
+    Returns the transform from the lying frame, so the paint can still be worked out there.
+    """
+    import trimesh
+
+    cup = m.metadata["cup"]
+    P = np.eye(4)
+    if upright:
+        P = trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0])   # (x, y, z) -> (x, z, -y)
+        P[:3, 3] = [-cup["x"], -5 - cup["z"], 0]
+        m.apply_transform(P)
+    dz = settle([m], stock, tol=3.0, sink=1.5 if upright else 6.0)
+    return trimesh.transformations.translation_matrix([0, 0, dz]) @ P
+
+
+def paint_cup(shell, stock, cup, bore, pose=None) -> np.ndarray:
+    """Slot per face: 0 stock, 1 outside, 2 inside (what the bore cut) and the rim."""
+    import trimesh
+    from scipy.spatial import cKDTree
+
+    pts, _ = trimesh.sample.sample_surface_even(stock, 400000, seed=0)
+    c = shell.triangles_center
+    d, _ = cKDTree(pts).query(c)
+    n = shell.face_normals
+    if pose is not None:
+        inv = np.linalg.inv(pose)
+        c = trimesh.transform_points(c, inv)
+        n = n @ inv[:3, :3].T
+    cut, _ = cKDTree(trimesh.sample.sample_surface_even(bore, 200000, seed=0)[0]).query(c)
+    rim = (n[:, 1] < -0.3) & (c[:, 1] < cup["front"] + 4)
+    return np.where(d < 0.8, 0, np.where((cut < 1.2) | rim, 2, 1))
+
+
+def palette(pixels: np.ndarray) -> list[str]:
+    """Body and accent color from the photo: split on redness, white-balance on the lighter half."""
+    from scipy.cluster.vq import kmeans2
+    from skimage.filters import threshold_otsu
+
+    red = pixels[:, 0] - pixels[:, 2]
+    warm = red > threshold_otsu(red)
+    if warm.all() or not warm.any():
+        warm = pixels.mean(1) < np.median(pixels.mean(1))
+    cent, k = kmeans2(pixels[warm], min(3, int(warm.sum())), seed=0, minit="++")
+    # the ground color is a big cluster, and lighter than any print on it
+    share = np.bincount(k, minlength=len(cent)) / len(k)
+    big = np.flatnonzero(share >= 0.25)
+    body = cent[big[np.argmax(cent[big].mean(1))]]
+    light = np.percentile(pixels[~warm], 90, axis=0)
+    gain = 240 / np.maximum(light, 1)
+
+    def fix(c, sat):
+        c = c * gain
+        return np.clip(c.mean() + (c - c.mean()) * sat, 0, 255)
+
+    return [_hex(fix(body, 1.6)), _hex(fix(light, 1.0))]
+
+
+def _hex(c) -> str:
+    return "#%02X%02X%02X" % tuple(int(round(v)) for v in c)
+
+
+def write_ams(path: Path, mesh, slots: np.ndarray, colors: list[str]) -> None:
+    """A minimal Bambu 3MF: one object, per-triangle paint codes, vertices exactly as in the STL."""
+    ns = 'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"'
+    f32 = lambda x: repr(float(np.float32(x)))
+    body = [f'<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" {ns}><resources>'
+            '<object id="1" type="model"><mesh><vertices>']
+    body += [f'<vertex x="{f32(a)}" y="{f32(b)}" z="{f32(c)}"/>' for a, b, c in mesh.vertices]
+    body.append("</vertices><triangles>")
+    body += [f'<triangle v1="{a}" v2="{b}" v3="{c}" paint_color="{CODES[s]}"/>'
+             for (a, b, c), s in zip(mesh.faces, slots)]
+    body.append("</triangles></mesh></object></resources></model>")
+    main = (f'<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" {ns} '
+            'xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"><resources>'
+            '<object id="2" type="model"><components><component p:path="/3D/Objects/object_1.model" '
+            'objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/></components></object></resources>'
+            '<build><item objectid="2"/></build></model>')
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("3D/3dmodel.model", main)
+        z.writestr("3D/Objects/object_1.model", "".join(body))
+        z.writestr("Metadata/project_settings.config", json.dumps({"filament_colour": colors}))
+
+
+def stock_shell():
+    """The stock upper shell in the CAD millimetre frame shellflow's seam check wants."""
+    import trimesh
+
+    design = paths.jumper_design()
+    profile = json.loads(paths.profile().read_text(encoding="utf-8"))
+    t = profile["cad_mm_to_parent_m"]
+    m = trimesh.load_mesh(design / "robots/jumper/meshes/visual/upper_shell_link.stl")
+    m.vertices = ((m.vertices - np.asarray(t["translation_m"])) @ np.asarray(t["rotation_matrix"])) / t["scale"]
+    return m
+
+
+def _fresh(name: str, out: Path | None, colors: list[str] | None) -> Path:
+    for c in colors or []:
+        if not HEX.match(c):
+            raise ShellError(f"color {c!r}: use #RRGGBB")
+    out = out or paths.out_dir() / name
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    return out
+
+
+def make(photo: Path, name: str, *, colors: list[str] | None = None, length: float = 150.0,
+         upright: bool = False, out: Path | None = None) -> Path:
+    import trimesh
+
+    out = _fresh(name, out, colors)
+    mesh, pixels = reconstruct(photo, out)
+    thing = lay_down(mesh, length)
+    cup = thing.metadata["cup"]
+    thing = thing.simplify_quadric_decimation(face_count=30000)
+    thing.metadata["cup"] = cup
+    thing = hollow(plain(thing))
+    stock = stock_shell()
+    pose = place_cup(thing, stock, upright)
+    fused = trimesh.boolean.union([stock, thing], engine="manifold")
+    cad = out / f"{name}-shell-mm.stl"
+    fused.export(cad)
+    fused = trimesh.load_mesh(cad, process=True)      # what assemble will see, face for face
+    picked = palette(pixels)
+    for i, c in enumerate(colors or []):
+        picked[i] = c
+    return package(out, name, cad, paint_cup(fused, stock, thing.metadata["cup"], thing.metadata["bore"], pose), [STOCK_RED] + picked[:2])
+
+
+def make_model(kind: str, name: str | None = None, *, colors: list[str] | None = None,
+               out: Path | None = None) -> Path:
+    """One of the built-in shapes (`MODELS`) instead of a photo."""
+    import trimesh
+    from scipy.spatial import cKDTree
+
+    from .shell_models import MODELS, SITTING
+
+    if kind not in MODELS:
+        raise ShellError(f"no model {kind!r}; have {', '.join(MODELS)}")
+    name = name or kind
+    out = _fresh(name, out, colors)
+    parts, picked, *base = MODELS[kind]()
+    for i, c in enumerate(colors or []):
+        picked[i] = c
+    stock = stock_shell()
+    if kind in SITTING:
+        settle([m for m, _ in parts], stock)
+    fused = trimesh.boolean.union([stock] + [m for m, _ in parts], engine="manifold")
+    cad = out / f"{name}-shell-mm.stl"
+    fused.export(cad)
+    fused = trimesh.load_mesh(cad, process=True)
+    # every face takes the color of the nearest part surface
+    pts, labels = [], []
+    for mesh, slot in [(stock, 0)] + parts:
+        p, _ = trimesh.sample.sample_surface_even(mesh, 30000, seed=0)
+        pts.append(p)
+        labels.append(np.full(len(p), slot))
+    _, near = cKDTree(np.vstack(pts)).query(fused.triangles_center)
+    return package(out, name, cad, np.concatenate(labels)[near], [base[0] if base else STOCK_RED] + picked)
+
+
+def package(out: Path, name: str, cad: Path, slots: np.ndarray, colors: list[str]) -> Path:
+    """Painted CAD shell -> assembled, exported and verified .skin."""
+    import trimesh
+
+    sys.path.insert(0, str(paths.jumper_design() / "src"))
+    from shellflow.packages import verify_package
+    from shellflow.simulation import assemble
+    from shellflow.skin_package import export_skin
+
+    fused = trimesh.load_mesh(cad, process=True)
+    write_ams(out / "ams.3mf", fused, slots, colors)
+    model = out / "assembly"
+    assemble(cad, model, paths.profile(), faces=60000)
+    report = json.loads((model / "simulation-report.json").read_text(encoding="utf-8"))
+    if report["colors"]["mode"] == "monochrome":
+        print(f"[shell] colors were not applied: {report['colors'].get('reason')}", file=sys.stderr)
+    skin = out / f"{name}.skin"
+    title = name.replace("-", " ").replace("_", " ").title()
+    export_skin(model, paths.profile(), cad, skin, package_id=name, title=title)
+    result = verify_package(skin, platform_profile=paths.profile(), mujoco=True)
+    if not result.get("ok"):
+        raise ShellError(f"verify-package: {json.dumps(result)}")
+    print(f"[shell] colors {' '.join(colors)}")
+    return skin
+
+
+def preview(skin: Path, png: Path, view: str = "three-quarter") -> None:
+    import subprocess
+
+    design = paths.jumper_design()
+    subprocess.run([paths.python(), str(design / "scripts/preview_simulation.py"),
+                    str(skin.parent / "assembly"), "--render", str(png), "--view", view],
+                   cwd=design, capture_output=True, timeout=300, check=False)

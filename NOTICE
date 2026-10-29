@@ -1,0 +1,22 @@
+tidepool
+Copyright 2026 BeBeBecon
+
+This project is licensed under the Apache License 2.0 (see LICENSE). It uses the
+following at runtime; none of it is copied into this repository.
+
+Jumper and jumper-design
+  Copyright KingKong Robotics. Apache License 2.0.
+  https://github.com/KingKongRobotics/jumper
+  https://github.com/KingKongRobotics/jumper-design
+  The eye animation shown on shells and in the closet is read from
+  jumper/tasks/jumper/dance/media/demo.mp4 in the local jumper clone.
+  The stock shell mesh and the robot model come from the same clones.
+
+TripoSR
+  Copyright (c) 2024 Tripo AI & Stability AI. MIT License.
+  https://github.com/VAST-AI-Research/TripoSR
+  Used from a local clone to turn photos into meshes; the model weights
+  (stabilityai/TripoSR) are downloaded by the user.
+
+rembg (MIT) with the u2net model (Apache-2.0) removes photo backgrounds.
+three.js (MIT) is loaded from unpkg by the closet page.
