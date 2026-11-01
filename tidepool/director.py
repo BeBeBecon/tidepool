@@ -278,7 +278,8 @@ def run(cfg: dict) -> None:
                     mujoco.mj_contactForce(model, data, k, f6)
                     hits.append([gname(c.geom1), gname(c.geom2), round(float(f6[0]), 2)])
             log.append({"t": round(t, 4), "root": [round(float(v), 4) for v in data.qpos[:7]],
-                        "watch": [[round(float(v), 4) for v in data.xpos[w]] for w in watch], "hits": hits})
+                        "watch": [[round(float(v), 4) for v in data.xpos[w]] for w in watch], "hits": hits,
+                        "q": [round(float(v), 4) for v in data.qpos[7:]]})
             if step % every == 0:
                 if eye is not None:
                     k = player.frame(t)
