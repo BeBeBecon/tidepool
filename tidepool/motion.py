@@ -38,6 +38,54 @@ def wave(contract: dict, seconds: float = 5.0) -> np.ndarray:
     return np.clip(q, lo, hi)
 
 
+def lean(contract: dict, pitch: np.ndarray, roll: np.ndarray) -> np.ndarray:
+    """Tilt the body (rad) with every support planted: IK on all six limbs."""
+    import mujoco
+
+    names = contract["wire_joint_order"]
+    m = mujoco.MjModel.from_xml_path(str(paths.profile().with_name("baseline.xml")))
+    d = mujoco.MjData(m)
+    home = np.array([contract["default_joint_pos"][n] for n in names])
+    d.qpos[:7] = 0, 0, 0, 1, 0, 0, 0
+    d.qpos[7:] = home
+    mujoco.mj_kinematics(m, d)
+    # At home the palms carry weight too, so they stay planted with the feet.
+    tips = [("LF_palm_pad_b", 0, 4), ("RF_palm_pad_b", 5, 4), ("LM_foot_tip", 10, 3),
+            ("RM_foot_tip", 13, 3), ("LR_foot_tip", 16, 3), ("RR_foot_tip", 19, 3)]
+    body = {tip: mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"{tip}_link") for tip, _, _ in tips}
+    goal = {tip: d.xpos[b].copy() for tip, b in body.items()}
+    limits = contract["joint_limits"]
+    lo, hi = np.array([limits[n] for n in names]).T
+
+    out = np.tile(home, (len(pitch), 1))
+    q = home.copy()
+    jac = np.zeros((3, m.nv))
+    for k, (p, r) in enumerate(zip(pitch, roll)):
+        cy, sy, cx, sx = np.cos(p / 2), np.sin(p / 2), np.cos(r / 2), np.sin(r / 2)
+        d.qpos[3:7] = cy * cx, cy * sx, sy * cx, -sy * sx
+        for _ in range(12):
+            d.qpos[7:] = q
+            mujoco.mj_kinematics(m, d)
+            mujoco.mj_comPos(m, d)
+            for tip, first, n in tips:
+                mujoco.mj_jacBody(m, d, jac, None, body[tip])
+                J = jac[:, 6 + first:6 + first + n]
+                q[first:first + n] += J.T @ np.linalg.solve(J @ J.T + 1e-4 * np.eye(3), goal[tip] - d.xpos[body[tip]])
+            q = np.clip(q, lo, hi)
+        out[k] = q
+    return out
+
+
+def rock(contract: dict, seconds: float = 8.0) -> np.ndarray:
+    """Nod, then sway. Used to see how far an open-loop lean really goes."""
+    t = np.arange(int(seconds * HZ)) / HZ
+    half = seconds / 2
+    env = np.sin(np.pi * t / seconds) ** 2
+    pitch = np.radians(12) * env * np.sin(2 * np.pi * t) * (t < half)
+    roll = np.radians(10) * env * np.sin(2 * np.pi * t) * (t >= half)
+    return lean(contract, pitch, roll)
+
+
 def trajectory(contract: dict, q: np.ndarray) -> dict:
     return {"_source": "tidepool motion", "joint_order": contract["wire_joint_order"],
             "q": q.round(5).tolist(), "qd": (np.gradient(q, axis=0) * HZ).round(5).tolist(),
@@ -65,6 +113,9 @@ def follower(contract: dict) -> bytes:
     return model.SerializeToString()
 
 
+MOTIONS = {"wave": wave, "rock": rock}
+
+
 def _deploy():
     spec = importlib.util.spec_from_file_location("deploy", paths.jumper() / "scripts" / "deploy.py")
     mod = importlib.util.module_from_spec(spec)
@@ -84,7 +135,7 @@ def pack(out: Path, name: str = "wave", rknn: Path | None = None) -> Path:
     contract_path = root / entry["contract"]
     contract = json.loads(contract_path.read_text("utf-8"))
 
-    q = wave(contract)
+    q = MOTIONS[name](contract)
     file = f"{name}.motion.trajectory.json"
     (root / entry["trajectory"]).unlink()
     (root / file).write_text(json.dumps(trajectory(contract, q)), "utf-8")
@@ -118,4 +169,5 @@ def pack(out: Path, name: str = "wave", rknn: Path | None = None) -> Path:
 if __name__ == "__main__":
     import sys
 
-    print(pack(Path(sys.argv[1]), rknn=Path(sys.argv[2]) if len(sys.argv) > 2 else None))
+    print(pack(Path(sys.argv[1]), sys.argv[2] if len(sys.argv) > 2 else "wave",
+               Path(sys.argv[3]) if len(sys.argv) > 3 else None))
