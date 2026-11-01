@@ -162,14 +162,35 @@ def cmd_shellify(args) -> int:
     return 0
 
 
+def _skins(given: list[str]) -> list[Path]:
+    if given:
+        return [Path(s) for s in given]
+    return sorted((p for p in paths.out_dir().glob("*/*.skin") if not p.parent.name.startswith("spike")),
+                  key=lambda p: p.stat().st_mtime)
+
+
+def cmd_studio(args) -> int:
+    from . import studio
+
+    root = paths.out_dir() / "studio"
+    skins = _skins(args.skins)
+    wanted = sorted(str(s) for s in skins)
+    index = root / "studio.json"
+    if args.rebuild or not index.exists() or json.loads(index.read_text("utf-8")).get("skins") != wanted:
+        takes = root / "takes.json"
+        kept = takes.read_text("utf-8") if takes.exists() else None
+        studio.export(skins, root)
+        if kept:
+            takes.write_text(kept, "utf-8")
+    shutil.copy(studio.PAGE, root / "index.html")
+    studio.serve(root, args.port, not args.no_open)
+    return 0
+
+
 def cmd_closet(args) -> int:
     from . import closet
 
-    if args.skins:
-        skins = [Path(s) for s in args.skins]
-    else:
-        skins = sorted((p for p in paths.out_dir().glob("*/*.skin") if not p.parent.name.startswith("spike")),
-                       key=lambda p: p.stat().st_mtime)
+    skins = _skins(args.skins)
     missing = [s for s in skins if not s.exists()]
     if missing:
         print(f"no such skin: {missing[0]}", file=sys.stderr)
@@ -254,6 +275,13 @@ def main(argv: list[str] | None = None) -> int:
     cl.add_argument("--no-open", action="store_true", help="serve, but don't open a browser")
     cl.add_argument("--no-serve", action="store_true", help="only write out/closet/")
     cl.set_defaults(fn=cmd_closet)
+
+    st = sub.add_parser("studio", help="pose the crab in the browser and pack the moves into an .app")
+    st.add_argument("skins", nargs="*", help=".skin files to dress it in (default: everything under out/)")
+    st.add_argument("--port", type=int, default=8766)
+    st.add_argument("--no-open", action="store_true", help="serve, but don't open a browser")
+    st.add_argument("--rebuild", action="store_true", help="export the crab again")
+    st.set_defaults(fn=cmd_studio)
 
     args = p.parse_args(argv)
     return args.fn(args)
