@@ -98,8 +98,8 @@ def yaw_of(quat) -> float:
     return math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
 
 
-def shell_parts(skin: Path, work: Path) -> list[tuple[str, list[float]]]:
-    """The upper shell meshes and colors packed in a .skin."""
+def shell_parts(skin: Path, work: Path) -> tuple[list[tuple[str, list[float]]], dict[str, list[float]]]:
+    """The upper shell meshes and colors packed in a .skin, plus the color of every other visual geom."""
     import xml.etree.ElementTree as ET
     import zipfile
 
@@ -109,11 +109,14 @@ def shell_parts(skin: Path, work: Path) -> list[tuple[str, list[float]]]:
     xml = ET.parse(robot / "robot.xml").getroot()
     meshdir = robot / (xml.find("compiler").get("meshdir", "") if xml.find("compiler") is not None else "")
     files = {m.get("name"): m.get("file") for m in xml.iter("mesh")}
-    parts = [(str((meshdir / files[g.get("mesh")]).resolve()), [float(v) for v in g.get("rgba", "1 1 1 1").split()])
-             for g in xml.iter("geom") if (g.get("name") or "").startswith("shellflow_upper_")]
+    rgba = lambda g: [float(v) for v in g.get("rgba", "1 1 1 1").split()]
+    geoms = [g for g in xml.iter("geom") if g.get("name")]
+    parts = [(str((meshdir / files[g.get("mesh")]).resolve()), rgba(g))
+             for g in geoms if g.get("name").startswith("shellflow_upper_")]
     if not parts:
         raise SystemExit(f"[shoot] {skin}: no upper shell in this skin")
-    return parts
+    paint = {g.get("name"): rgba(g) for g in geoms if g.get("name").endswith("_visual") and g.get("rgba")}
+    return parts, paint
 
 
 def dress(skin: Path | None, eyes) -> None:
@@ -129,7 +132,7 @@ def dress(skin: Path | None, eyes) -> None:
     from . import face
 
     work = Path(tempfile.mkdtemp(prefix="tidepool-robot-"))
-    parts = shell_parts(skin, work) if skin else []
+    parts, paint = shell_parts(skin, work) if skin else ([], {})
     load = mujoco.MjSpec.from_file
 
     def from_file(path, *a, **kw):
@@ -140,6 +143,10 @@ def dress(skin: Path | None, eyes) -> None:
             face.add(spec, eyes, work)
         if not parts:
             return spec
+        for g in spec.geoms:            # collision meshes peek through the visuals, so they get the paint too
+            c = paint.get(g.name.replace("_meshcol", "_visual"))
+            if c and g.name != "upper_shell_link_meshcol":
+                g.rgba = c
         old = spec.geom("upper_shell_link_visual")
         body = old.parent
         cls = old.classname
