@@ -76,6 +76,15 @@ git clone https://github.com/VAST-AI-Research/TripoSR ../TripoSR
 pip install -e ".[shell]"
 ```
 
+Or keep the shape and change the paint:
+
+```
+tidepool paint sunset          # also tidepool, sprinkles
+```
+
+The shell gets up to four colors face by face, the way a 4-filament print would; gradients
+are stepped with a dithered seam. Every leg and claw part gets one color of its own.
+
 Put `skin: out/kabuto/kabuto.skin` in a scene YAML and `play` / `shoot` dress the crab
 in it. The eyes light up with the stock face animation from jumper.
 

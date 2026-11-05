@@ -400,8 +400,9 @@ def make_model(kind: str, name: str | None = None, *, colors: list[str] | None =
     return package(out, name, cad, np.concatenate(labels)[near], [base[0] if base else STOCK_RED] + picked)
 
 
-def package(out: Path, name: str, cad: Path, slots: np.ndarray, colors: list[str]) -> Path:
-    """Painted CAD shell -> assembled, exported and verified .skin."""
+def package(out: Path, name: str, cad: Path, slots: np.ndarray, colors: list[str],
+            parts: dict[str, str] | None = None) -> Path:
+    """Painted CAD shell -> assembled, exported and verified .skin. `parts` recolors limb links."""
     import trimesh
 
     sys.path.insert(0, str(paths.jumper_design() / "src"))
@@ -410,7 +411,9 @@ def package(out: Path, name: str, cad: Path, slots: np.ndarray, colors: list[str
     fused = trimesh.load_mesh(cad, process=True)
     write_ams(out / "ams.3mf", fused, slots, colors)
     model = out / "assembly"
-    assemble(cad, model, paths.profile(), faces=60000)
+    rgba = lambda c: [int(c[i:i + 2], 16) / 255 for i in (1, 3, 5)] + [1.0]
+    overrides = [{"link": l, "geom": f"{l}_visual", "rgba": rgba(c)} for l, c in (parts or {}).items()]
+    assemble(cad, model, paths.profile(), faces=60000, visual_overrides=overrides or None)
     report = json.loads((model / "simulation-report.json").read_text(encoding="utf-8"))
     if report["colors"]["mode"] == "monochrome":
         print(f"[shell] colors were not applied: {report['colors'].get('reason')}", file=sys.stderr)

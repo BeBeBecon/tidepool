@@ -137,6 +137,19 @@ def cmd_shoot(args) -> int:
         raise SystemExit(f"error: {e}") from None
 
 
+def cmd_paint(args) -> int:
+    from . import paint, shell
+
+    try:
+        skin = paint.make(args.kind, args.name)
+    except (shell.ShellError, paths.MissingRepo) as e:
+        raise SystemExit(f"error: {e}") from None
+    png = skin.with_suffix(".png")
+    shell.preview(skin, png)
+    print(f"wrote {skin}" + (f" and {png}" if png.exists() else ""))
+    return 0
+
+
 def cmd_shellify(args) -> int:
     from . import shell
 
@@ -247,6 +260,11 @@ def main(argv: list[str] | None = None) -> int:
     sf.add_argument("--length", type=float, default=150.0, help="front-to-back size in mm (default 150)")
     sf.add_argument("--upright", action="store_true", help="stand a cup mouth-up instead of lying it down")
     sf.set_defaults(fn=cmd_shellify)
+
+    pt = sub.add_parser("paint", help="repaint the stock shell and limbs: sunset, tidepool, sprinkles")
+    pt.add_argument("kind")
+    pt.add_argument("--name")
+    pt.set_defaults(fn=cmd_paint)
 
     cl = sub.add_parser("closet", help="try every shell on the crab in the browser")
     cl.add_argument("skins", nargs="*", help=".skin files (default: everything under out/)")
