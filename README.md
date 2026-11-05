@@ -99,6 +99,27 @@ Click a tag to swap shells, `1`-`9` or the arrows do the same, `C` cycles the ca
 URL opens straight to a shot. It is three.js with jumper-design's web lighting, not a
 simulation; `shoot` is for the crab moving.
 
+## Studio
+
+```
+tidepool studio                # pose the crab, hit pads, pack an .app
+```
+
+Drag the yellow balls to move the claws, set a pose per frame on the film strip, or drop
+in a preset. The pads tab plays takes with `1`-`8`. `pack .app` swaps your takes into the
+shipped gesture and dance slots, so the app keeps its keys: `1`-`4`, then `Ctrl+1`-`4`.
+
+No training. Each take is a recording plus a one-matrix ONNX that follows it, open loop,
+so nothing catches the crab if a pose tips it over. Lifting both palms slides the body
+back first, because at rest they carry weight. Check new moves with `shoot`.
+
+Converted `.rknn` files are picked up from `out/studio-board/`. Without one the app still
+runs in simulation, and the board holds home for that take.
+
+With a real Jumper you could go arms-limp, move the claws by hand, record the joints at
+50 Hz and get the same take format back, ready to edit on the film strip. I don't have
+one, so that part isn't written.
+
 ## License
 
 Apache-2.0. Jumper and jumper-design are copyright KingKong Robotics, Apache-2.0; this

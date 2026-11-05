@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tidepool studio</title>
+<link href="https://fonts.googleapis.com/css2?family=Shantell+Sans:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root { --ink:#1f3330; --paper:#fbf6ea; --sand:#efe2c6; --foam:#dcebe6; --kelp:#2f5d50; --coral:#d9533b; --sun:#f2b632; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; overflow:hidden; }
+  body { background:linear-gradient(180deg,var(--foam),#e8eadb 55%,var(--sand)); color:var(--ink); font-family:"Shantell Sans","Comic Sans MS",system-ui,sans-serif; }
+  canvas { display:block; touch-action:none; }
+  button { font:inherit; color:inherit; cursor:pointer; background:var(--paper); border:1.5px solid var(--ink); border-radius:3px 12px 12px 3px; padding:5px 11px; box-shadow:2px 2px 0 rgba(31,51,48,.2); }
+  button:hover { background:var(--sand); }
+  button.hot { background:var(--ink); color:var(--paper); }
+  header { position:fixed; top:14px; left:18px; display:flex; gap:10px; align-items:center; }
+  header h1 { margin:0 8px 0 0; font-size:30px; line-height:1; }
+  #side { position:fixed; right:14px; top:14px; width:206px; display:flex; flex-direction:column; gap:8px; }
+  #side label { display:block; font-size:13px; }
+  #side input[type=range] { width:100%; accent-color:var(--coral); }
+  .bin { display:flex; flex-wrap:wrap; gap:5px; }
+  .bin button { font-size:13px; padding:3px 8px; }
+  #say { position:fixed; left:18px; top:58px; max-width:320px; font-size:13px; opacity:.85; }
+  #say.bad { color:var(--coral); font-weight:700; opacity:1; }
+  #film { position:fixed; left:0; right:0; bottom:0; padding:9px 12px; background:var(--ink); display:flex; gap:6px; overflow-x:auto; align-items:stretch; }
+  .frame { flex:0 0 74px; height:58px; background:var(--paper); color:var(--ink); border-radius:2px; padding:4px 6px; font-size:12px; cursor:pointer; position:relative; }
+  .frame.on { background:var(--sun); }
+  .frame small { display:block; opacity:.65; font-size:10px; }
+  #film button { flex:0 0 auto; background:var(--kelp); color:var(--paper); border-color:var(--paper); }
+  #pads { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); display:none; grid-template-columns:repeat(4,104px); gap:9px; }
+  .pad { height:92px; padding:7px 9px; text-align:left; display:flex; flex-direction:column; justify-content:space-between; border-radius:4px; }
+  .pad b { font-size:21px; line-height:1; }
+  .pad small { font-size:11px; opacity:.65; }
+  .pad.live { background:var(--coral); color:#fff; }
+  .pad.empty { opacity:.5; }
+  .pad.sel { outline:3px solid var(--sun); }
+  body.pads #pads { display:grid; }
+  body.pads #film, body.pads #side { display:none; }
+  body.clean header, body.clean #side, body.clean #say, body.clean #film, body.clean #pads { display:none; }
+  @media (max-width:700px) { #side { top:auto; bottom:84px; width:170px; } #pads { grid-template-columns:repeat(4,78px); } .pad { height:76px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>studio</h1>
+  <button id="toPuppet" class="hot">puppet</button>
+  <button id="toPads">pads</button>
+  <select id="skin"></select>
+</header>
+<div id="say">grab a yellow ball. the claw follows.</div>
+<aside id="side">
+  <label>nod <input id="pitch" type="range" min="-14" max="14" step="1"></label>
+  <label>sway <input id="roll" type="range" min="-12" max="12" step="1"></label>
+  <label>left pincer <input id="clawL" type="range" min="0" max="1.5" step=".05"></label>
+  <label>right pincer <input id="clawR" type="range" min="0" max="1.5" step=".05"></label>
+  <div class="bin"><button id="dropL">left down</button><button id="dropR">right down</button></div>
+  <div class="bin" id="presets"></div>
+  <div class="bin">
+    <button id="slower">+0.1s</button><button id="faster">−0.1s</button><button id="del">delete</button>
+  </div>
+  <div class="bin"><button id="play">▶ play</button><button id="pack">pack .app</button></div>
+</aside>
+<div id="film"></div>
+<div id="pads"></div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
+
+const $ = (id) => document.getElementById(id);
+const api = async (name, body = {}) => (await fetch(`/api/${name}`, { method: "POST", body: JSON.stringify(body) })).json();
+const manifest = await (await fetch("studio.json")).json();
+const info = await api("info");
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.95;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.01, 20);
+camera.position.set(0.92, 0.46, 0.78);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0.04, 0.13, 0);
+controls.minDistance = 0.3;
+controls.maxDistance = 2.5;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x90988b, 1.7));
+const sun = new THREE.DirectionalLight(0xfff8ed, 2.4);
+sun.position.set(1.5, 4, 2);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -0.6, right: 0.6, top: 0.6, bottom: -0.6, near: 0.5, far: 10 });
+sun.shadow.bias = -0.0003;
+sun.shadow.normalBias = 0.002;
+scene.add(sun);
+const floor = new THREE.Mesh(new THREE.CircleGeometry(0.9, 64), new THREE.MeshStandardMaterial({ color: 0xe6d3aa, roughness: 1 }));
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// MuJoCo is z-up, three is y-up
+const crab = new THREE.Group();
+crab.rotation.x = -Math.PI / 2;
+scene.add(crab);
+
+const loader = new GLTFLoader();
+const load = (url) => new Promise((ok, no) => loader.load(url, (g) => {
+  g.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    o.geometry = toCreasedNormals(o.geometry, THREE.MathUtils.degToRad(60));
+    o.material.roughness = 0.28;
+    o.castShadow = true;
+  });
+  ok(g.scene);
+}, undefined, no));
+
+const links = {};
+await Promise.all(manifest.links.map(async (b) => {
+  const g = new THREE.Group();
+  g.add(await load(`links/${b}.glb`));
+  crab.add(g);
+  links[b] = g;
+}));
+links[manifest.base] ??= crab.add(new THREE.Group()).children.at(-1);
+const shells = {};
+await Promise.all(manifest.shells.map(async (s) => { shells[s.id] = await load(`shells/${s.id}.glb`); }));
+const eye = new THREE.MeshBasicMaterial({ toneMapped: false, map: new THREE.TextureLoader().load("eyes/normal.png") });
+eye.map.colorSpace = THREE.SRGBColorSpace;
+eye.map.magFilter = THREE.NearestFilter;
+for (const q of manifest.eyes) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(q.flat(), 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
+  g.setIndex([0, 1, 2, 0, 2, 3]);
+  links[manifest.base].add(new THREE.Mesh(g, eye));
+}
+
+function wear(id) {
+  Object.values(shells).forEach((s) => s.removeFromParent());
+  if (links[manifest.stock]) links[manifest.stock].visible = !shells[id];
+  if (shells[id]) links[manifest.base].add(shells[id]);
+}
+$("skin").innerHTML = `<option value="">stock</option>` + manifest.shells.map((s) => `<option value="${s.id}">${s.title}</option>`).join("");
+$("skin").onchange = (e) => wear(e.target.value);
+
+function show(bodies) {
+  for (const b of manifest.links) {
+    const [x, y, z, qw, qx, qy, qz] = bodies[b];
+    links[b].position.set(x, y, z);
+    links[b].quaternion.set(qx, qy, qz, qw);
+  }
+}
+
+const ball = (side) => {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.017, 20, 14), new THREE.MeshBasicMaterial({ color: 0xf2b632, depthTest: false, transparent: true, opacity: .95 }));
+  m.userData.side = side;
+  m.renderOrder = 5;
+  crab.add(m);
+  return m;
+};
+const balls = { LF: ball("LF"), RF: ball("RF") };
+
+const blank = (name) => ({ name, keys: [] });
+const pads = info.pads || info.keys.map((_, i) => null);
+let at = 0, sel = 0, pose = info.home;
+
+const take = () => pads[at] ??= blank(`take ${at + 1}`);
+const homeKey = () => ({ t: 0, q: info.home.q, pitch: 0, roll: 0, back: 0, lifted: [], label: "home" });
+if (!take().keys.length) take().keys.push(homeKey());
+const key = () => take().keys[sel];
+
+function apply(p) {
+  pose = p;
+  show(p.bodies);
+  for (const s of ["LF", "RF"]) balls[s].position.set(...p.tips[s]);
+}
+function sync() {
+  const k = key();
+  $("pitch").value = Math.round(k.pitch * 57.3);
+  $("roll").value = Math.round(k.roll * 57.3);
+  $("clawL").value = Math.abs(k.q[4]);
+  $("clawR").value = Math.abs(k.q[9]);
+}
+function say(text, bad = false) {
+  $("say").textContent = text;
+  $("say").classList.toggle("bad", bad);
+}
+
+let saving;
+const store = () => { clearTimeout(saving); saving = setTimeout(() => api("save", { pads }), 300); };
+function film() {
+  const box = $("film");
+  box.innerHTML = "";
+  take().keys.forEach((k, i) => {
+    const d = document.createElement("div");
+    d.className = "frame" + (i === sel ? " on" : "");
+    d.innerHTML = `${k.t.toFixed(1)}s<small>${k.label || `pose ${i + 1}`}</small>`;
+    d.onclick = () => choose(i);
+    box.append(d);
+  });
+  const add = document.createElement("button");
+  add.textContent = "+ pose";
+  add.onclick = () => {
+    const k = key();
+    take().keys.splice(sel + 1, 0, { ...k, q: [...k.q], lifted: [...k.lifted], t: +(k.t + 0.5).toFixed(2), label: "" });
+    retime(sel + 2, 0.5);
+    sel += 1;
+    film(); sync(); store();
+  };
+  box.append(add);
+}
+function retime(from, by) {
+  take().keys.slice(from).forEach((k) => { k.t = +(k.t + by).toFixed(2); });
+}
+async function choose(i) {
+  sel = i;
+  film(); sync();
+  apply(await api("solve", { ...solveArgs(), reach: null }));
+}
+
+function solveArgs(extra = {}) {
+  const k = key();
+  return { q: k.q, pitch: k.pitch, roll: k.roll, lifted: k.lifted, ...extra };
+}
+let busy = false, queued = null;
+async function solve(extra = {}) {
+  if (busy) { queued = extra; return; }
+  busy = true;
+  const r = await api("solve", solveArgs(extra));
+  const k = key();
+  k.q = r.q; k.back = r.back;
+  apply(r);
+  busy = false;
+  if (queued) { const next = queued; queued = null; return solve(next); }
+  store();
+}
+
+// drag a claw on the plane facing the camera
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(), plane = new THREE.Plane(), hit = new THREE.Vector3();
+let dragging = null;
+function aim(e) {
+  mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+}
+renderer.domElement.addEventListener("pointerdown", (e) => {
+  if (document.body.classList.contains("pads")) return;
+  aim(e);
+  const got = ray.intersectObjects(Object.values(balls))[0];
+  if (!got) return;
+  dragging = got.object.userData.side;
+  controls.enabled = false;
+  plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()), got.object.getWorldPosition(new THREE.Vector3()));
+  renderer.domElement.setPointerCapture(e.pointerId);
+});
+renderer.domElement.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  aim(e);
+  if (!ray.ray.intersectPlane(plane, hit)) return;
+  const p = crab.worldToLocal(hit.clone());
+  p.z = Math.max(p.z, 0.02);
+  const k = key();
+  if (!k.lifted.includes(dragging)) k.lifted = [...k.lifted, dragging];
+  solve({ reach: { [dragging]: p.toArray() } });
+});
+addEventListener("pointerup", () => { dragging = null; controls.enabled = true; });
+
+const lean = (field, id) => { $(id).oninput = (e) => { key()[field] = e.target.value / 57.3; solve(); }; };
+lean("pitch", "pitch");
+lean("roll", "roll");
+$("clawL").oninput = (e) => { key().q[4] = -e.target.value; solve(); };
+$("clawR").oninput = (e) => { key().q[9] = +e.target.value; solve(); };
+const drop = (side, first) => () => {
+  const k = key();
+  k.lifted = k.lifted.filter((s) => s !== side);
+  k.q = k.q.map((v, i) => (i >= first && i < first + 5 ? info.home.q[i] : v));
+  solve();
+};
+$("dropL").onclick = drop("LF", 0);
+$("dropR").onclick = drop("RF", 5);
+$("slower").onclick = () => { if (sel) { retime(sel, 0.1); film(); store(); } };
+$("faster").onclick = () => {
+  const keys = take().keys;
+  if (sel && keys[sel].t - keys[sel - 1].t > 0.15) { retime(sel, -0.1); film(); store(); }
+};
+$("del").onclick = () => {
+  if (take().keys.length < 2) return;
+  take().keys.splice(sel, 1);
+  sel = Math.max(0, sel - 1);
+  choose(sel); store();
+};
+for (const name of info.presets) {
+  const b = document.createElement("button");
+  b.textContent = name;
+  b.onclick = async () => {
+    const { keys } = await api("preset", { name });
+    const last = take().keys.at(-1);
+    const from = last.label === "home" && take().keys.length === 1 ? 0.5 : last.t + 0.6;
+    take().keys.push(...keys.map((k, i) => ({ ...k, t: +(k.t + from).toFixed(2), label: i ? "" : name })));
+    sel = take().keys.length - 1;
+    choose(sel); store();
+  };
+  $("presets").append(b);
+}
+
+let run = null;
+async function play(i = at) {
+  const keys = pads[i]?.keys;
+  if (!keys || keys.length < 2) return say("nothing on this pad yet");
+  const r = await api("play", { keys });
+  run = { frames: r.frames, fps: r.fps, t0: performance.now(), pad: i };
+  drawPads();
+  if (r.speed > r.fast) say(`too quick for a servo? ${r.speed} rad/s. slow it down.`, true);
+  else say(`${(r.frames.length / r.fps).toFixed(1)}s, top speed ${r.speed} rad/s`);
+}
+$("play").onclick = () => play();
+$("pack").onclick = async () => {
+  say("packing...");
+  const r = await api("export", { pads });
+  if (r.error) return say(r.error, true);
+  say(`${r.app}${r.stub.length ? " (no .rknn, sim only)" : ""}`);
+};
+
+function drawPads() {
+  const box = $("pads");
+  box.innerHTML = "";
+  info.keys.forEach((k, i) => {
+    const full = pads[i]?.keys?.length > 1;
+    const b = document.createElement("button");
+    b.className = `pad${full ? "" : " empty"}${run?.pad === i ? " live" : ""}${i === at ? " sel" : ""}`;
+    b.innerHTML = `<b>${i + 1}</b><span>${full ? pads[i].name : "empty"}</span><small>app: ${k}</small>`;
+    b.onclick = (e) => { if (e.shiftKey || !full) edit(i); else play(i); };
+    box.append(b);
+  });
+}
+function edit(i) {
+  at = i;
+  sel = 0;
+  if (!take().keys.length) take().keys.push(homeKey());
+  mode(false);
+  choose(0);
+}
+function mode(onPads) {
+  document.body.classList.toggle("pads", onPads);
+  $("toPads").classList.toggle("hot", onPads);
+  $("toPuppet").classList.toggle("hot", !onPads);
+  Object.values(balls).forEach((b) => { b.visible = !onPads; });
+  controls.target.y = onPads ? 0.0 : 0.13;    // lifts the crab clear of the pads
+  say(onPads ? "hit a pad, or keys 1-8. shift-click to edit." : "grab a yellow ball. the claw follows.");
+  drawPads();
+}
+$("toPuppet").onclick = () => mode(false);
+$("toPads").onclick = () => mode(true);
+
+addEventListener("keydown", (e) => {
+  if (/^[1-8]$/.test(e.key) && document.body.classList.contains("pads")) play(+e.key - 1);
+  else if (e.key === " ") { play(); e.preventDefault(); }
+  else if (e.key.toLowerCase() === "h") document.body.classList.toggle("clean");
+});
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+film(); sync(); apply(info.home); drawPads();
+if (new URLSearchParams(location.search).get("pads")) mode(true);
+
+renderer.setAnimationLoop((now) => {
+  if (run) {
+    const f = Math.floor((now - run.t0) / 1000 * run.fps);
+    if (f < run.frames.length) show(run.frames[f]);
+    else { run = null; apply(pose); drawPads(); }
+  }
+  Object.values(balls).forEach((b) => { b.material.opacity = run ? 0 : .95; });
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
