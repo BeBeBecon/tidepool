@@ -41,6 +41,10 @@ viewer needs `mjpython`, which the venv gets from MuJoCo. Set `TIDEPOOL_JUMPER` 
 `tidepool toys` lists them. So far:
 
 - `domino_run`: dominoes along a `line`, `arc`, `spiral` or `zigzag`.
+- `chochin`: paper lanterns on a line between two poles. They glow, and nothing bumps into them.
+- `maku`: a red and white festival curtain.
+
+Looks are `studio`, `wood`, `night`, `beach` and `matsuri`, a dusk sky over a plank stage.
 
 More on the way. A toy is one function in `tidepool/toys/` that returns mjscene objects;
 see `domino_run.py` for the shape of it.
@@ -58,7 +62,7 @@ cup-shaped) into a `.skin` with the thing fused onto the stock shell:
 
 ```
 tidepool shellify mug.jpg --upright --colors "#F4C6CF,#FFFFFF"
-tidepool shellify kabuto       # or sneaker, shiba, box: built-in models, no photo needed
+tidepool shellify kabuto       # or sneaker, shiba, box, kasa: built-in models, no photo needed
 ```
 
 Photos go through [TripoSR](https://github.com/VAST-AI-Research/TripoSR) on the CPU

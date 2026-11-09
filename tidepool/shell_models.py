@@ -143,5 +143,60 @@ def kabuto():
     return parts, ["#D4A93A", "#14264F"], "#1F4FA8"
 
 
-MODELS = {"sneaker": sneaker, "shiba": shiba, "box": crate, "kabuto": kabuto}
+def plate(r0, r1, thick, a0=0.0, a1=np.pi, sections=48):
+    """A flat ring sector from angle `a0` to `a1`, `thick` mm in z, centred on z = 0."""
+    a = np.linspace(a0, a1, sections)
+    arc = np.c_[np.cos(a), np.sin(a)]
+    ring = np.vstack([arc * r1, arc[::-1] * max(r0, 0.5)])     # outer arc out, inner arc back
+    n, h = len(ring), thick / 2
+    v = np.vstack([np.c_[ring, np.full(n, -h)], np.c_[ring, np.full(n, h)]])
+    f = []
+    for i in range(sections - 1):                               # a strip between the two arcs
+        o0, o1, i0, i1 = i, i + 1, n - 1 - i, n - 2 - i
+        f += [[o0, i0, o1], [o1, i0, i1], [o0 + n, o1 + n, i0 + n], [o1 + n, i1 + n, i0 + n]]
+    for i in range(n):
+        j = (i + 1) % n
+        f += [[i, j, j + n], [i, j + n, i + n]]
+    m = trimesh.Trimesh(v, f, process=True)
+    m.fix_normals()
+    return m
+
+
+def kasa(r=104.0, slope=38.0, gap=4.0):
+    """The folded straw hat of the awa odori: the ridge runs front to back, the sides slope off left and right.
+
+    It sits on a thin red pole, just high enough that the brim clears the stock shell by `gap` mm.
+    """
+    from .shell import stock_shell
+
+    straw, rim, cord = 1, 2, 3
+    rot = trimesh.transformations.rotation_matrix
+    t = np.tan(np.radians(slope))
+    v = stock_shell().vertices
+    ridge = float((v[:, 2] + np.abs(v[:, 0]) * t).max()) + gap + 2
+    parts = []
+    for a0, sign in ((-np.pi / 2, 1), (np.pi / 2, -1)):
+        a1 = a0 + np.pi
+        for piece, slot in ((plate(0, r, 3.0, a0, a1), straw), (plate(r - 8, r, 4.6, a0, a1), rim),
+                            (plate(r * .6, r * .6 + 4, 3.8, a0, a1), rim)):
+            piece.apply_transform(rot(sign * np.radians(slope), (0, 1, 0)))
+            piece.apply_translation((0, 0, ridge))
+            parts.append((piece, slot))
+    parts.append((cyl((0, 0, (BASE + ridge) / 2), 6, ridge - BASE), cord))
+    parts.append((blob((0, -r * .2, ridge + 3), (6, 6, 7), sub=2), rim))
+    return parts, ["#D8B46A", "#8A6A35", "#C8302C"], "#22386B"
+
+
+MODELS = {"sneaker": sneaker, "shiba": shiba, "box": crate, "kabuto": kabuto,
+          "kasa": kasa}
+
+
+def yukata(link: str) -> str:
+    """Indigo near the body, white towards the tips."""
+    from .paint import PAD, reach
+
+    return "#F3EEE2" if PAD.search(link) or reach(link) >= .5 else "#22386B"
+
+
+LIMBS = {"kasa": yukata}   # models that repaint the legs too
 SITTING = {"sneaker", "shiba", "box"}      # things put on the shell, lowered until they touch it
