@@ -181,10 +181,24 @@ def preset(name: str, rig: Rig) -> list[dict]:
         flex = _arm(rig, -1.7, .55, -.3)
         p = np.radians(-6)
         return [key(.0, flex, p, lifted=both), key(1.2, flex, p, lifted=both)]
+    if name == "awa":
+        top, pump = _arm(rig, -1.9, .2), _arm(rig, -1.9, .9)
+        keys = [key(.0, top, lifted=both)]
+        keys += [key(.25 * (i + 1), pump if i % 2 == 0 else top, np.radians(-3 if i % 2 == 0 else 2), lifted=both)
+                 for i in range(4)]
+        # two beats: one hand high with a flick of the claw, leaning forward and toward it
+        for i in range(16):
+            s = 1 if i % 2 == 0 else -1
+            hi, lo = ("L", "R") if s > 0 else ("R", "L")
+            q = _arm(rig, -2.15, .35, s * .35, .9, side=hi)
+            q = _arm(rig, -1.55, .55, s * .35, side=lo, q=q)
+            keys.append(key(1.0 + .45 * (i + 1), q, np.radians(13), np.radians(9 * s), both))
+        up = _arm(rig, -2.1, .2, claw=1.0)
+        return keys + [key(8.7, up, np.radians(-5), lifted=both), key(9.7, up, np.radians(-5), lifted=both)]
     raise KeyError(name)
 
 
-PRESETS = ["wave", "clap", "snip", "bow", "sway", "flex"]
+PRESETS = ["wave", "clap", "snip", "bow", "sway", "flex", "awa"]
 
 
 def trajectory(names: list[str], q: np.ndarray) -> dict:
