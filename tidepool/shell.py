@@ -368,19 +368,32 @@ def make(photo: Path, name: str, *, colors: list[str] | None = None, length: flo
     return package(out, name, cad, paint_cup(fused, stock, thing.metadata["cup"], thing.metadata["bore"], pose), [STOCK_RED] + picked[:2])
 
 
+def _limbs(color) -> dict[str, str]:
+    import xml.etree.ElementTree as ET
+
+    from .paint import LIMB
+
+    profile = paths.profile()
+    base = json.loads(profile.read_text(encoding="utf-8"))["baseline_mjcf"]
+    links = [b.get("name") for b in ET.parse(profile.parent / base).iter("body")]
+    return {l: color(l) for l in links if LIMB.match(l)}
+
+
 def make_model(kind: str, name: str | None = None, *, colors: list[str] | None = None,
-               out: Path | None = None) -> Path:
+               out: Path | None = None, limbs: dict[str, str] | None = None) -> Path:
     """One of the built-in shapes (`MODELS`) instead of a photo."""
     import trimesh
     from scipy.spatial import cKDTree
 
-    from .shell_models import MODELS, SITTING
+    from .shell_models import LIMBS, MODELS, SITTING
 
     if kind not in MODELS:
         raise ShellError(f"no model {kind!r}; have {', '.join(MODELS)}")
     name = name or kind
     out = _fresh(name, out, colors)
     parts, picked, *base = MODELS[kind]()
+    if limbs is None and kind in LIMBS:
+        limbs = _limbs(LIMBS[kind])
     for i, c in enumerate(colors or []):
         picked[i] = c
     stock = stock_shell()
@@ -397,7 +410,8 @@ def make_model(kind: str, name: str | None = None, *, colors: list[str] | None =
         pts.append(p)
         labels.append(np.full(len(p), slot))
     _, near = cKDTree(np.vstack(pts)).query(fused.triangles_center)
-    return package(out, name, cad, np.concatenate(labels)[near], [base[0] if base else STOCK_RED] + picked)
+    return package(out, name, cad, np.concatenate(labels)[near], [base[0] if base else STOCK_RED] + picked,
+                   parts=limbs)
 
 
 def package(out: Path, name: str, cad: Path, slots: np.ndarray, colors: list[str],

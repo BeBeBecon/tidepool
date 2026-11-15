@@ -30,7 +30,18 @@ LOOKS: dict[str, dict[str, Any]] = {
         "lighting": {"preset": "noon"},
         "ground": {"material": "sand", "friction": "sand", "size": [12, 12]},
     },
+    "matsuri": {
+        "sky": {"preset": "dusk", "top": [0.04, 0.05, 0.16], "bottom": [0.62, 0.3, 0.2], "haze": [0.3, 0.18, 0.2]},
+        "lighting": {"preset": "sunset"},
+        "ground": {"material": "yagura", "friction": "wood", "size": [8, 8]},
+    },
 }
+
+MATERIALS = [
+    {"name": "yagura", "texture": {"generator": "wood_planks", "params": {"base": [120, 84, 52], "seed": 3}},
+     "texrepeat": [14, 14]},
+    *toys.matsuri.MATERIALS,
+]
 
 
 def build(spec: Spec, cache_dir: Path | None = None, with_terrain: bool = False):
@@ -66,6 +77,7 @@ def build(spec: Spec, cache_dir: Path | None = None, with_terrain: bool = False)
         "description": spec.description or f"{spec.name}, made with tidepool.",
         "tags": ["tidepool", *sorted({c.kind for c in spec.toys})],
         **LOOKS[spec.look],
+        "materials": list(MATERIALS),
         "defaults": {"friction": "wood", "contact": "default"},
         "spawn": {
             "position": [spawn_at[0], spawn_at[1], 0.0],
