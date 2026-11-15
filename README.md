@@ -1,7 +1,20 @@
 # tidepool
 
-A toy box for [Jumper](https://github.com/KingKongRobotics/jumper), the open-source
-crab robot. Write a few lines of YAML, get a `.map` you can drop the crab into.
+Things to make for [Jumper](https://github.com/KingKongRobotics/jumper), the open-source
+crab robot, in all three kinds beunlimited.me takes:
+
+```
+tidepool build spiral.yaml     # a scene (.map) from a few lines of YAML
+tidepool shellify mug.jpg      # a shell (.skin) from a photo, or a built-in like kasa
+tidepool paint sunset          # or keep the stock shape and repaint it
+tidepool studio                # pose a dance in the browser, pack it into an .app
+```
+
+Everything goes through the official checks before it is written, and `tidepool shoot`
+films the crab with it in MuJoCo. Built for the Crab Robot Open-source Challenge 2026;
+it all runs in simulation, no robot or GPU needed.
+
+## Scenes
 
 ```yaml
 name: spiral-dominoes
@@ -16,8 +29,7 @@ tidepool build spiral.yaml    # -> out/spiral-dominoes/spiral-dominoes.map, veri
 tidepool play spiral.yaml     # opens it in MuJoCo with the shipped app driving the crab
 ```
 
-The `.map` is a plain kk-scene-package, so it uploads to beunlimited.me as is. Built for
-the Crab Robot Open-source Challenge 2026. Everything runs in simulation.
+The `.map` is a plain kk-scene-package, so it uploads as is.
 
 ## Setup
 
