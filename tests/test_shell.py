@@ -74,3 +74,15 @@ def test_models_fit_the_legs_and_colors(kind):
         assert mesh.is_watertight
         assert 1 <= slot <= len(colors)
         assert np.abs(mesh.bounds[:, 0]).max() <= shell.HALF_WIDTH
+
+
+def test_kasa_brim_clears_the_shell():
+    from tidepool import shell_models
+
+    try:
+        stock = shell.stock_shell()
+    except (paths.MissingRepo, FileNotFoundError, ValueError):
+        pytest.skip("needs jumper-design")
+    parts, *_ = shell_models.kasa()
+    hat = trimesh.util.concatenate([m for m, slot in parts if slot != 3])     # all but the pole
+    assert len(trimesh.boolean.intersection([hat, stock], engine="manifold").faces) == 0

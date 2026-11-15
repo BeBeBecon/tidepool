@@ -41,6 +41,10 @@ viewer needs `mjpython`, which the venv gets from MuJoCo. Set `TIDEPOOL_JUMPER` 
 `tidepool toys` lists them. So far:
 
 - `domino_run`: dominoes along a `line`, `arc`, `spiral` or `zigzag`.
+- `chochin`: paper lanterns on a line between two poles. They glow, and nothing bumps into them.
+- `maku`: a red and white festival curtain.
+
+Looks are `studio`, `wood`, `night`, `beach` and `matsuri`, a dusk sky over a plank stage.
 
 More on the way. A toy is one function in `tidepool/toys/` that returns mjscene objects;
 see `domino_run.py` for the shape of it.
@@ -58,7 +62,7 @@ cup-shaped) into a `.skin` with the thing fused onto the stock shell:
 
 ```
 tidepool shellify mug.jpg --upright --colors "#F4C6CF,#FFFFFF"
-tidepool shellify kabuto       # or sneaker, shiba, box: built-in models, no photo needed
+tidepool shellify kabuto       # or sneaker, shiba, box, kasa: built-in models, no photo needed
 ```
 
 Photos go through [TripoSR](https://github.com/VAST-AI-Research/TripoSR) on the CPU
@@ -76,6 +80,15 @@ git clone https://github.com/VAST-AI-Research/TripoSR ../TripoSR
 pip install -e ".[shell]"
 ```
 
+Or keep the shape and change the paint:
+
+```
+tidepool paint sunset          # also tidepool, sprinkles
+```
+
+The shell gets up to four colors face by face, the way a 4-filament print would; gradients
+are stepped with a dithered seam. Every leg and claw part gets one color of its own.
+
 Put `skin: out/kabuto/kabuto.skin` in a scene YAML and `play` / `shoot` dress the crab
 in it. The eyes light up with the stock face animation from jumper.
 
@@ -89,6 +102,27 @@ Click a tag to swap shells, `1`-`9` or the arrows do the same, `C` cycles the ca
 `F` the face, `H` hides the UI for recording. `?shell=kabuto&cam=front&clean=1` in the
 URL opens straight to a shot. It is three.js with jumper-design's web lighting, not a
 simulation; `shoot` is for the crab moving.
+
+## Studio
+
+```
+tidepool studio                # pose the crab, hit pads, pack an .app
+```
+
+Drag the yellow balls to move the claws, set a pose per frame on the film strip, or drop
+in a preset. The pads tab plays takes with `1`-`8`. `pack .app` swaps your takes into the
+shipped gesture and dance slots, so the app keeps its keys: `1`-`4`, then `Ctrl+1`-`4`.
+
+No training. Each take is a recording plus a one-matrix ONNX that follows it, open loop,
+so nothing catches the crab if a pose tips it over. Lifting both palms slides the body
+back first, because at rest they carry weight. Check new moves with `shoot`.
+
+Converted `.rknn` files are picked up from `out/studio-board/`. Without one the app still
+runs in simulation, and the board holds home for that take.
+
+With a real Jumper you could go arms-limp, move the claws by hand, record the joints at
+50 Hz and get the same take format back, ready to edit on the film strip. I don't have
+one, so that part isn't written.
 
 ## License
 

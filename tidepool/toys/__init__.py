@@ -63,4 +63,4 @@ def expand(kind: str, index: int, params: dict[str, Any]) -> list[dict[str, Any]
     return fn(Ctx(f"{kind}_{index}"), **{k: v for k, v in params.items() if k != "shape"})
 
 
-from . import domino_run  # noqa: E402,F401
+from . import domino_run, matsuri  # noqa: E402,F401

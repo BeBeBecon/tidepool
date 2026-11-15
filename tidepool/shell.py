@@ -368,19 +368,32 @@ def make(photo: Path, name: str, *, colors: list[str] | None = None, length: flo
     return package(out, name, cad, paint_cup(fused, stock, thing.metadata["cup"], thing.metadata["bore"], pose), [STOCK_RED] + picked[:2])
 
 
+def _limbs(color) -> dict[str, str]:
+    import xml.etree.ElementTree as ET
+
+    from .paint import LIMB
+
+    profile = paths.profile()
+    base = json.loads(profile.read_text(encoding="utf-8"))["baseline_mjcf"]
+    links = [b.get("name") for b in ET.parse(profile.parent / base).iter("body")]
+    return {l: color(l) for l in links if LIMB.match(l)}
+
+
 def make_model(kind: str, name: str | None = None, *, colors: list[str] | None = None,
-               out: Path | None = None) -> Path:
+               out: Path | None = None, limbs: dict[str, str] | None = None) -> Path:
     """One of the built-in shapes (`MODELS`) instead of a photo."""
     import trimesh
     from scipy.spatial import cKDTree
 
-    from .shell_models import MODELS, SITTING
+    from .shell_models import LIMBS, MODELS, SITTING
 
     if kind not in MODELS:
         raise ShellError(f"no model {kind!r}; have {', '.join(MODELS)}")
     name = name or kind
     out = _fresh(name, out, colors)
     parts, picked, *base = MODELS[kind]()
+    if limbs is None and kind in LIMBS:
+        limbs = _limbs(LIMBS[kind])
     for i, c in enumerate(colors or []):
         picked[i] = c
     stock = stock_shell()
@@ -397,32 +410,49 @@ def make_model(kind: str, name: str | None = None, *, colors: list[str] | None =
         pts.append(p)
         labels.append(np.full(len(p), slot))
     _, near = cKDTree(np.vstack(pts)).query(fused.triangles_center)
-    return package(out, name, cad, np.concatenate(labels)[near], [base[0] if base else STOCK_RED] + picked)
+    return package(out, name, cad, np.concatenate(labels)[near], [base[0] if base else STOCK_RED] + picked,
+                   parts=limbs)
 
 
-def package(out: Path, name: str, cad: Path, slots: np.ndarray, colors: list[str]) -> Path:
-    """Painted CAD shell -> assembled, exported and verified .skin."""
+def package(out: Path, name: str, cad: Path, slots: np.ndarray, colors: list[str],
+            parts: dict[str, str] | None = None) -> Path:
+    """Painted CAD shell -> assembled, exported and verified .skin. `parts` recolors limb links."""
     import trimesh
 
     sys.path.insert(0, str(paths.jumper_design() / "src"))
-    from shellflow.packages import verify_package
     from shellflow.simulation import assemble
-    from shellflow.skin_package import export_skin
 
     fused = trimesh.load_mesh(cad, process=True)
     write_ams(out / "ams.3mf", fused, slots, colors)
     model = out / "assembly"
-    assemble(cad, model, paths.profile(), faces=60000)
+    rgba = lambda c: [int(c[i:i + 2], 16) / 255 for i in (1, 3, 5)] + [1.0]
+    overrides = [{"link": l, "geom": f"{l}_visual", "rgba": rgba(c)} for l, c in (parts or {}).items()]
+    assemble(cad, model, paths.profile(), faces=60000, visual_overrides=overrides or None)
     report = json.loads((model / "simulation-report.json").read_text(encoding="utf-8"))
     if report["colors"]["mode"] == "monochrome":
         print(f"[shell] colors were not applied: {report['colors'].get('reason')}", file=sys.stderr)
+    print(f"[shell] colors {' '.join(colors)}")
+    return export(out, name, cad)
+
+
+def export(out: Path, name: str, cad: Path) -> Path:
+    """Assembly -> .skin with an embedded thumbnail, which the site wants for its listing."""
+    sys.path.insert(0, str(paths.jumper_design() / "src"))
+    from PIL import Image
+    from shellflow.packages import verify_package
+    from shellflow.skin_package import export_skin
+
+    model = out / "assembly"
+    thumb = out / "thumb.png"
+    preview(out / f"{name}.skin", thumb)
+    Image.open(thumb).convert("RGB").resize((800, 600), Image.LANCZOS).save(thumb)
     skin = out / f"{name}.skin"
+    skin.unlink(missing_ok=True)
     title = name.replace("-", " ").replace("_", " ").title()
-    export_skin(model, paths.profile(), cad, skin, package_id=name, title=title)
+    export_skin(model, paths.profile(), cad, skin, package_id=name, title=title, preview=thumb)
     result = verify_package(skin, platform_profile=paths.profile(), mujoco=True)
     if not result.get("ok"):
         raise ShellError(f"verify-package: {json.dumps(result)}")
-    print(f"[shell] colors {' '.join(colors)}")
     return skin
 
 
@@ -431,5 +461,5 @@ def preview(skin: Path, png: Path, view: str = "three-quarter") -> None:
 
     design = paths.jumper_design()
     subprocess.run([paths.python(), str(design / "scripts/preview_simulation.py"),
-                    str(skin.parent / "assembly"), "--render", str(png), "--view", view],
+                    str(skin.parent.resolve() / "assembly"), "--render", str(png.resolve()), "--view", view],
                    cwd=design, capture_output=True, timeout=300, check=False)
